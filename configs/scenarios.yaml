@@ -1,0 +1,89 @@
+# Scenarios Configuration for Closed-Loop Edge Server Switching Simulation
+# Target: IEEE PerCom 2027 A4E Workshop
+
+simulation:
+  time_step_s: 0.5           # Control epoch duration (s)
+  chunk_duration_s: 1.0      # Video chunk duration tau (s)
+  default_duration_s: 60.0   # Scenario duration (s)
+  bitrate_ladder_mbps: [1.5, 3.0, 5.0, 8.0, 15.0, 25.0]  # 480p, 720p, 1080p, 1440p, 4K
+  initial_buffer_s: 3.0      # Starting playout buffer (s)
+  target_buffer_s: 4.0       # ABR target buffer (s)
+
+# Candidate Edge Server Infrastructure
+servers:
+  s1:
+    server_id: "s1"
+    name: "Edge-Local-Alpha"
+    capacity_mbps: 300.0
+    base_latency_ms: 25.0
+    initial_background_users: 10
+    max_capacity_users: 50
+  s2:
+    server_id: "s2"
+    name: "Edge-Metro-Beta"
+    capacity_mbps: 800.0
+    base_latency_ms: 45.0
+    initial_background_users: 25
+    max_capacity_users: 100
+  s3:
+    server_id: "s3"
+    name: "Edge-Regional-Gamma"
+    capacity_mbps: 1500.0
+    base_latency_ms: 80.0
+    initial_background_users: 60
+    max_capacity_users: 200
+
+# Canonical Evaluation Scenarios
+scenarios:
+  scenario_a:
+    name: "Scenario A: Minor Fluctuations (Noise Only)"
+    description: "Benign Gaussian and heavy-tailed measurement jitter around stationary mean QoS. No true network degradation."
+    duration_s: 60.0
+    noise_model: "gaussian"
+    noise_sigma_latency: 3.0
+    noise_sigma_bw: 1.5
+    expected_optimal_action: "RETAIN"
+
+  scenario_b:
+    name: "Scenario B: Meaningful Change (Regime Shift)"
+    description: "Serving server undergoes persistent link throughput degradation (-60%) and latency inflation at t=20s."
+    duration_s: 60.0
+    noise_model: "gaussian"
+    regime_shift_time_s: 20.0
+    regime_shift_target: "s1"
+    regime_shift_capacity_drop_pct: 0.65
+    regime_shift_latency_add_ms: 45.0
+    expected_optimal_action: "SWITCH"
+
+  scenario_c:
+    name: "Scenario C: Constraint Failure (SLO Violation / Outage)"
+    description: "Serving server crashes (A=0) or latency exceeds hard SLO (>120ms) at t=15s."
+    duration_s: 60.0
+    failure_time_s: 15.0
+    failure_target: "s1"
+    failure_type: "OUTAGE"     # Outage (A=0) or SLO_VIOLATION
+    expected_optimal_action: "SWITCH"
+
+  scenario_d:
+    name: "Scenario D: Multi-User Contention & Herding"
+    description: "Sudden arrival of a flash crowd (30 users) at candidate server s2, testing closed-loop capacity degradation."
+    duration_s: 60.0
+    flash_crowd_time_s: 20.0
+    flash_crowd_target: "s2"
+    flash_crowd_count: 30
+    expected_optimal_action: "RETAIN_OR_DIVERT"
+
+  scenario_e:
+    name: "Scenario E: Telemetry Staleness (Heartbeat Drop)"
+    description: "Serving server stops emitting telemetry packets at t=18s, causing age > T_stale (2.0s)."
+    duration_s: 60.0
+    stale_time_s: 18.0
+    stale_target: "s1"
+    expected_optimal_action: "SWITCH"
+
+  scenario_f:
+    name: "Scenario F: Client Mobility & Gradual Drift"
+    description: "Client moves away from s1 towards s2, causing monotonic latency increase on s1 (+1.5 ms/s) and decrease on s2 (-1.0 ms/s)."
+    duration_s: 60.0
+    mobility_drift_rate_ms_per_s: 1.5
+    expected_optimal_action: "SWITCH"
