@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments and secrets
+.venv/
+env/
+.conda/
+.env
+
+# Internal research and author planning documents (excluded from public artifact repo)
+docs/
+
+# Reference PDFs and third-party copyright papers
+references/
+
+# Large datasets and traces (tracked via scripts or external links)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Generated experiment outputs (track schemas/scripts, not bulky outputs)
+logs/*
+experiments/runs/*
+plots/generated/*
+!logs/.gitkeep
+!experiments/runs/.gitkeep
+!plots/generated/.gitkeep
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

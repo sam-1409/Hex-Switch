@@ -1,0 +1,24 @@
+name: edge-switching
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - pyarrow
+  - pyyaml
+  - matplotlib
+  - pytest
+  - typer
+  - ruff
+  - mypy
+  - pytorch
+  - torchvision
+  - pytorch-cuda=12.1
+  - pip:
+      - pytest-cov
