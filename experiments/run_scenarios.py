@@ -8,7 +8,6 @@ import pandas as pd
 
 from edge_switching.scenarios import run_scenario
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_STYLE = ROOT_DIR / "configs" / "plot_style.mplstyle"
 LOGS_DIR = ROOT_DIR / "logs"
 PLOTS_DIR = ROOT_DIR / "plots" / "generated"
@@ -20,10 +19,19 @@ def main():
 
     plt.style.use(CONFIG_STYLE)
 
-    scenarios = ["scenario_a", "scenario_b", "scenario_c", "scenario_d", "scenario_e", "scenario_f"]
+    scenarios = [
+        "scenario_a",
+        "scenario_b",
+        "scenario_c",
+        "scenario_d",
+        "scenario_e",
+        "scenario_f",
+        "scenario_edge_infra",
+        "scenario_puffer",
+    ]
     results = {}
 
-    print("Running canonical evaluation scenarios (A through F)...")
+    print("Running evaluation scenarios (Synthetic + Real Traces)...")
     for sc in scenarios:
         df = run_scenario(sc, duration_s=40.0, dt_s=0.5, num_clients=3, seed=42)
         log_csv = LOGS_DIR / f"{sc}_run.csv"
@@ -33,8 +41,8 @@ def main():
         stalls = df[df["stall_s"] > 0]
         print(f"  [{sc}] completed: {len(df)} steps, {len(switches)} switches, {len(stalls)} stalls. Saved -> {log_csv.name}")
 
-    # Generate multi-scenario timeline sanity check plot
-    fig, axes = plt.subplots(3, 2, figsize=(7.0, 6.0), sharex=True)
+    # Generate 4x2 multi-scenario timeline sanity check plot
+    fig, axes = plt.subplots(4, 2, figsize=(7.0, 7.5), sharex=True)
     axes = axes.flatten()
 
     titles = {
@@ -44,6 +52,8 @@ def main():
         "scenario_d": "Scenario D: Multi-User Herding",
         "scenario_e": "Scenario E: Telemetry Staleness",
         "scenario_f": "Scenario F: Client Mobility",
+        "scenario_edge_infra": "Scenario Edge-Infra: Real Inter-Edge Traces (CLUSTER '22)",
+        "scenario_puffer": "Scenario Puffer: Live Streaming Session Traces (USENIX '20)",
     }
 
     server_colors = {"s1": "#0072B2", "s2": "#D55E00", "s3": "#009E73"}
@@ -62,7 +72,7 @@ def main():
 
         ax.set_title(titles[sc], fontsize=7, pad=2)
         ax.set_ylabel("Throughput (Mbps)", fontsize=6)
-        if idx >= 4:
+        if idx >= 6:
             ax.set_xlabel("Time (s)", fontsize=6)
         ax.grid(True, alpha=0.25)
         if idx == 0:

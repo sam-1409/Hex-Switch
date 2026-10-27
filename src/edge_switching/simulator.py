@@ -143,20 +143,33 @@ class EdgeServerNode:
 
 
 class TraceReplayer:
-    """Replays real-world throughput and latency traces."""
+    """Replays real-world throughput and latency traces (Cellular, Edge Infrastructure, Puffer)."""
 
-    def __init__(self, trace_file_path: Optional[Path] = None):
+    def __init__(self, trace_path: Optional[Path] = None):
+        from edge_switching.trace_loaders import (
+            EdgeInfrastructureTraceLoader,
+            PufferTraceLoader,
+        )
+        self.edge_infra_loader: Optional[EdgeInfrastructureTraceLoader] = None
+        self.puffer_loader: Optional[PufferTraceLoader] = None
         self.timestamps: List[float] = []
         self.bandwidths: List[float] = []
         self.latencies: List[float] = []
         self.packet_losses: List[float] = []
-        if trace_file_path and trace_file_path.exists():
-            self._load_csv(trace_file_path)
+
+        if trace_path:
+            path = Path(trace_path)
+            if path.is_dir():
+                if (path / "BW-MessageSize.csv").exists():
+                    self.edge_infra_loader = EdgeInfrastructureTraceLoader(path)
+                elif list(path.glob("video_sent_*.csv")):
+                    self.puffer_loader = PufferTraceLoader(path)
+            elif path.is_file():
+                self._load_csv(path)
 
     def _load_csv(self, path: Path):
         with open(path, "r", encoding="utf-8") as f:
             lines = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-        header = lines[0].split(",")
         for line in lines[1:]:
             parts = [float(p) for p in line.split(",")]
             self.timestamps.append(parts[0])
@@ -166,10 +179,20 @@ class TraceReplayer:
 
     def query(self, current_time_s: float) -> Tuple[float, float, float]:
         """Interpolate (bandwidth_mbps, latency_ms, packet_loss) at current_time_s."""
+        if self.edge_infra_loader:
+            bw, lat, is_outage = self.edge_infra_loader.query(current_time_s)
+            loss = 1.0 if is_outage else 0.001
+            return bw, lat, loss
+
+        if self.puffer_loader:
+            bw, lat = self.puffer_loader.query(current_time_s)
+            return bw, lat, 0.001
+
         if not self.timestamps:
             return 25.0, 30.0, 0.001  # Default fallback
+
         max_t = self.timestamps[-1]
-        t = current_time_s % max_t  # Loop trace
+        t = current_time_s % max_t if max_t > 0 else 0.0
         bw = float(np.interp(t, self.timestamps, self.bandwidths))
         lat = float(np.interp(t, self.timestamps, self.latencies))
         loss = float(np.interp(t, self.timestamps, self.packet_losses))

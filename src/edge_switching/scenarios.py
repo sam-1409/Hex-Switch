@@ -84,8 +84,25 @@ def run_scenario(
         noise_sigma_bw=noise_sigma_bw,
     )
 
-    if trace_path and trace_path.exists():
-        from edge_switching.simulator import TraceReplayer
+    root_dir = Path(__file__).resolve().parents[2]
+    raw_data_dir = root_dir / "data" / "raw"
+
+    from edge_switching.simulator import TraceReplayer
+    if scenario_id == "scenario_edge_infra":
+        edge_dir = raw_data_dir / "edge-infrastructure-traces"
+        if edge_dir.exists():
+            sim.trace_replayers["s1"] = TraceReplayer(edge_dir)
+            sim.servers["s1"].capacity_mbps = 850.0
+            sim.servers["s1"].base_latency_ms = 15.0
+
+    elif scenario_id == "scenario_puffer":
+        puffer_dir = raw_data_dir / "puffer-fake-sample"
+        if puffer_dir.exists():
+            sim.trace_replayers["s1"] = TraceReplayer(puffer_dir)
+            sim.servers["s1"].capacity_mbps = 50.0
+            sim.servers["s1"].base_latency_ms = 40.0
+
+    elif trace_path and trace_path.exists():
         sim.trace_replayers["s1"] = TraceReplayer(trace_path)
 
     records = []
@@ -129,6 +146,12 @@ def run_scenario(
                 event_label = EventLabel.GRADUAL_DRIFT
                 sim.servers["s1"].base_latency_ms = min(130.0, 25.0 + 1.8 * (t - 10.0))
                 sim.servers["s2"].base_latency_ms = max(20.0, 45.0 - 0.7 * (t - 10.0))
+
+        elif scenario_id == "scenario_edge_infra":
+            event_label = EventLabel.NOISE
+
+        elif scenario_id == "scenario_puffer":
+            event_label = EventLabel.NOISE
 
         # Advance simulation
         step_result = sim.step(dt_s=dt_s, current_event_label=event_label)

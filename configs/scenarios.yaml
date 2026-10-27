@@ -87,3 +87,17 @@ scenarios:
     duration_s: 60.0
     mobility_drift_rate_ms_per_s: 1.5
     expected_optimal_action: "SWITCH"
+
+  scenario_edge_infra:
+    name: "Scenario Edge-Infra: Real Inter-Edge Cluster Traces"
+    description: "Driven by IEEE CLUSTER 2022 Edge Infrastructure traces (D02 to D01 interconnect). Replays measured inter-device bandwidth, latency, and socket refusal events."
+    duration_s: 60.0
+    dataset_source: "data/raw/edge-infrastructure-traces"
+    reference: "N. Mehran et al., IEEE CLUSTER 2022"
+
+  scenario_puffer:
+    name: "Scenario Puffer: Live Video Delivery Traces"
+    description: "Driven by Stanford Puffer streaming session traces (delivery rates, smoothed RTT, chunk sizes)."
+    duration_s: 60.0
+    dataset_source: "data/raw/puffer-fake-sample"
+    reference: "F. Yan et al., USENIX ATC 2020"
