@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edge-switching"
+version = "0.1.0"
+description = "HCI-Guided, XAI-Enabled Server Switching for QoS-Aware Edge Computing"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Research Team" }
+]
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "pyarrow",
+    "pyyaml",
+    "matplotlib",
+    "typer",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-v"
