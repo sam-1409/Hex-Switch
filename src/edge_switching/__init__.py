@@ -55,6 +55,14 @@ from edge_switching.explainer import (
     EdgeSwitchingExplainer,
     ExplanationResult,
 )
+from edge_switching.auditor import (
+    FaultType,
+    AuditSeverity,
+    AuditReport,
+    FaithfulnessReport,
+    PostDecisionAuditor,
+    CounterfactualFaithfulnessVerifier,
+)
 
 __version__ = "0.1.0"
 
@@ -94,4 +102,10 @@ __all__ = [
     "get_all_weight_methods",
     "EdgeSwitchingExplainer",
     "ExplanationResult",
+    "FaultType",
+    "AuditSeverity",
+    "AuditReport",
+    "FaithfulnessReport",
+    "PostDecisionAuditor",
+    "CounterfactualFaithfulnessVerifier",
 ]

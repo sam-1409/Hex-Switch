@@ -14,6 +14,9 @@ Input CSV data files:
 - logs/xai/data_feature_attributions.csv
 - logs/xai/data_counterfactual_margins.csv
 - logs/xai/data_explanation_stability.csv
+- logs/auditor/data_fault_detection_confusion.csv
+- logs/auditor/data_counterfactual_faithfulness.csv
+- logs/auditor/data_auditor_latency_overhead.csv
 
 Output plot files:
 - plots/plot1_churn_noise_vs_shift.png & .pdf
@@ -25,6 +28,9 @@ Output plot files:
 - plots/plot7_feature_attributions_scenarios.png & .pdf
 - plots/plot8_counterfactual_margins.png & .pdf
 - plots/plot9_explanation_stability_noise.png & .pdf
+- plots/plot10_auditor_fault_confusion.png & .pdf
+- plots/plot11_counterfactual_faithfulness.png & .pdf
+- plots/plot12_auditor_runtime_overhead.png & .pdf
 """
 
 from pathlib import Path
@@ -327,5 +333,109 @@ plt.savefig(OUTPUT_DIR / "plot9_explanation_stability_noise.pdf")
 plt.close()
 print("Saved -> plot9_explanation_stability_noise.png / .pdf")
 
-print("\nAll 9 individual single plots generated successfully.")
+
+# ===========================================================================
+# PLOT 10: Auditor Fault Detection & Confusion Metrics
+# ===========================================================================
+df10 = pd.read_csv("logs/auditor/data_fault_detection_confusion.csv")
+
+plt.figure(figsize=(6.5, 4.0))
+fault_labels = [
+    "Stale\nTelemetry",
+    "Infeasible\nAssignment",
+    "Spurious\nHandover",
+    "Buffer\nStarvation",
+    "Weight\nCorrupt"
+]
+x = np.arange(len(df10))
+width = 0.26
+
+plt.bar(x - width, df10["recall"] * 100, width, label="Recall (Sensitivity %)", color="#0072B2", edgecolor="black", linewidth=0.5)
+plt.bar(x, df10["precision"] * 100, width, label="Precision (%)", color="#009E73", edgecolor="black", linewidth=0.5)
+plt.bar(x + width, df10["specificity"] * 100, width, label="Specificity (1 - FPR %)", color="#E69F00", edgecolor="black", linewidth=0.5)
+
+plt.title("Post-Decision Auditor Fault Detection Performance", fontsize=11, fontweight="bold")
+plt.xlabel("Injected Safety Fault Class", fontsize=9)
+plt.ylabel("Classification Metric (%)", fontsize=9)
+plt.xticks(x, fault_labels, fontsize=8)
+plt.ylim(0, 115)
+plt.legend(loc="upper right", fontsize=8)
+plt.grid(axis="y", linestyle="--", alpha=0.5)
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "plot10_auditor_fault_confusion.png", dpi=300)
+plt.savefig(OUTPUT_DIR / "plot10_auditor_fault_confusion.pdf")
+plt.close()
+print("Saved -> plot10_auditor_fault_confusion.png / .pdf")
+
+
+# ===========================================================================
+# PLOT 11: Explanation Faithfulness & Monotonic Decision Inversion
+# ===========================================================================
+df11 = pd.read_csv("logs/auditor/data_counterfactual_faithfulness.csv")
+
+plt.figure(figsize=(6.0, 3.8))
+crit_colors = {
+    "effective_bw": "#009E73",
+    "latency": "#0072B2",
+    "server_load": "#E69F00",
+    "packet_loss": "#D55E00",
+}
+crit_labels = {
+    "effective_bw": "Effective BW (Dominant Driver)",
+    "latency": "Latency",
+    "server_load": "Server Load",
+    "packet_loss": "Packet Loss",
+}
+
+for crit in df11["criterion"].unique():
+    sub = df11[df11["criterion"] == crit]
+    plt.plot(sub["perturbation_delta"], sub["resulting_margin"],
+             marker="o", markersize=4, linewidth=1.6,
+             color=crit_colors.get(crit, "black"), label=crit_labels.get(crit, crit))
+
+plt.axhline(0.0, color="black", linestyle="--", linewidth=1.0, alpha=0.8, label="Decision Boundary ($M=0$)")
+plt.title("Explanation Faithfulness: Margin Monotonicity", fontsize=11, fontweight="bold")
+plt.xlabel("Criterion Perturbation Delta ($\Delta u_k$)", fontsize=9)
+plt.ylabel("Net Decision Margin $M$", fontsize=9)
+plt.legend(loc="upper right", fontsize=7.5)
+plt.grid(True, linestyle="--", alpha=0.5)
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "plot11_counterfactual_faithfulness.png", dpi=300)
+plt.savefig(OUTPUT_DIR / "plot11_counterfactual_faithfulness.pdf")
+plt.close()
+print("Saved -> plot11_counterfactual_faithfulness.png / .pdf")
+
+
+# ===========================================================================
+# PLOT 12: Auditor Sub-Millisecond Runtime Execution Overhead
+# ===========================================================================
+df12 = pd.read_csv("logs/auditor/data_auditor_latency_overhead.csv")
+
+plt.figure(figsize=(5.8, 3.8))
+latencies = df12["latency_us"]
+
+plt.hist(latencies, bins=35, color="#56B4E9", edgecolor="black", linewidth=0.5, density=True, alpha=0.7, label="Empirical PDF")
+mean_lat = float(np.mean(latencies))
+p99_lat = float(np.percentile(latencies, 99))
+
+plt.axvline(mean_lat, color="#D55E00", linestyle="-", linewidth=1.5, label=f"Mean: {mean_lat:.1f} $\\mu$s")
+plt.axvline(p99_lat, color="#CC79A7", linestyle="--", linewidth=1.5, label=f"99th Pct: {p99_lat:.1f} $\\mu$s")
+
+plt.title("Post-Decision Auditor Runtime Latency Distribution", fontsize=11, fontweight="bold")
+plt.xlabel("Execution Time ($\\mu$s)", fontsize=9)
+plt.ylabel("Probability Density", fontsize=9)
+plt.xlim(0, max(25.0, p99_lat * 1.5))
+plt.legend(loc="upper right", fontsize=8)
+plt.grid(axis="y", linestyle="--", alpha=0.5)
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "plot12_auditor_runtime_overhead.png", dpi=300)
+plt.savefig(OUTPUT_DIR / "plot12_auditor_runtime_overhead.pdf")
+plt.close()
+print("Saved -> plot12_auditor_runtime_overhead.png / .pdf")
+
+print("\nAll 12 individual single plots generated successfully.")
+
 
