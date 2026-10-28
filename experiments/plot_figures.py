@@ -17,6 +17,10 @@ Input CSV data files:
 - logs/auditor/data_fault_detection_confusion.csv
 - logs/auditor/data_counterfactual_faithfulness.csv
 - logs/auditor/data_auditor_latency_overhead.csv
+- logs/scalability/data_client_scaling_herding.csv
+- logs/scalability/data_server_scaling_latency.csv
+- logs/ablations/data_ablation_study.csv
+- logs/ablations/data_statistical_tests.csv
 
 Output plot files:
 - plots/plot1_churn_noise_vs_shift.png & .pdf
@@ -31,6 +35,10 @@ Output plot files:
 - plots/plot10_auditor_fault_confusion.png & .pdf
 - plots/plot11_counterfactual_faithfulness.png & .pdf
 - plots/plot12_auditor_runtime_overhead.png & .pdf
+- plots/plot13_client_scaling_herding.png & .pdf
+- plots/plot14_server_scaling_complexity.png & .pdf
+- plots/plot15_ablation_qoe_vs_churn.png & .pdf
+- plots/plot16_statistical_significance_pvalues.png & .pdf
 """
 
 from pathlib import Path
@@ -436,6 +444,137 @@ plt.savefig(OUTPUT_DIR / "plot12_auditor_runtime_overhead.pdf")
 plt.close()
 print("Saved -> plot12_auditor_runtime_overhead.png / .pdf")
 
-print("\nAll 12 individual single plots generated successfully.")
+
+# ===========================================================================
+# PLOT 13: Multi-User Herding Rate vs Client Density (N=1 to 100)
+# ===========================================================================
+df13 = pd.read_csv("logs/scalability/data_client_scaling_herding.csv")
+
+plt.figure(figsize=(6.2, 4.0))
+policies = df13["policy"].unique()
+pol_colors = {
+    "Proposed-Margin": "#0072B2",
+    "AHP-TOPSIS": "#D55E00",
+    "Min-Latency": "#009E73",
+    "Max-Total-BW": "#E69F00",
+}
+pol_markers = {
+    "Proposed-Margin": "o",
+    "AHP-TOPSIS": "s",
+    "Min-Latency": "^",
+    "Max-Total-BW": "D",
+}
+
+for pol in policies:
+    sub = df13[df13["policy"] == pol]
+    plt.plot(sub["num_clients"], sub["mean_ping_pong_pct"],
+             marker=pol_markers.get(pol, "o"), markersize=5, linewidth=1.6,
+             color=pol_colors.get(pol, "black"), label=pol)
+
+plt.title("Multi-User Herding Oscillations Under Contention", fontsize=11, fontweight="bold")
+plt.xlabel("Connected Client Density per Cell ($N$)", fontsize=9)
+plt.ylabel("Ping-Pong Herding Rate (%)", fontsize=9)
+plt.ylim(-2, 105)
+plt.legend(loc="center right", fontsize=8)
+plt.grid(True, linestyle="--", alpha=0.5)
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "plot13_client_scaling_herding.png", dpi=300)
+plt.savefig(OUTPUT_DIR / "plot13_client_scaling_herding.pdf")
+plt.close()
+print("Saved -> plot13_client_scaling_herding.png / .pdf")
+
+
+# ===========================================================================
+# PLOT 14: Algorithmic Runtime Complexity Scaling (M=3 to 32 Servers)
+# ===========================================================================
+df14 = pd.read_csv("logs/scalability/data_server_scaling_latency.csv")
+
+plt.figure(figsize=(6.2, 4.0))
+x = np.arange(len(df14))
+width = 0.55
+
+b1 = df14["matrix_build_us"]
+b2 = df14["policy_select_us"]
+b3 = df14["explainer_us"]
+b4 = df14["auditor_us"]
+
+plt.bar(x, b1, width, label="Matrix Build $O(MK)$", color="#56B4E9", edgecolor="black", linewidth=0.5)
+plt.bar(x, b2, width, bottom=b1, label="Policy Selection $O(M)$", color="#0072B2", edgecolor="black", linewidth=0.5)
+plt.bar(x, b3, width, bottom=b1+b2, label="Explainer $O(K)$", color="#E69F00", edgecolor="black", linewidth=0.5)
+plt.bar(x, b4, width, bottom=b1+b2+b3, label="Auditor $O(1)$", color="#009E73", edgecolor="black", linewidth=0.5)
+
+plt.title("Algorithmic Runtime Scaling by Pipeline Stage", fontsize=11, fontweight="bold")
+plt.xlabel("Candidate Server Count ($M$)", fontsize=9)
+plt.ylabel("Execution Time ($\mu$s)", fontsize=9)
+plt.xticks(x, df14["num_servers_M"], fontsize=8)
+plt.legend(loc="upper left", fontsize=8)
+plt.grid(axis="y", linestyle="--", alpha=0.5)
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "plot14_server_scaling_complexity.png", dpi=300)
+plt.savefig(OUTPUT_DIR / "plot14_server_scaling_complexity.pdf")
+plt.close()
+print("Saved -> plot14_server_scaling_complexity.png / .pdf")
+
+
+# ===========================================================================
+# PLOT 15: Component Ablation Study (QoE vs Switching Churn)
+# ===========================================================================
+df15 = pd.read_csv("logs/ablations/data_ablation_study.csv")
+
+plt.figure(figsize=(6.5, 4.2))
+colors = ["#0072B2", "#56B4E9", "#009E73", "#E69F00", "#D55E00", "#CC79A7", "#888888"]
+
+for i, row in df15.iterrows():
+    cfg = row["configuration"]
+    c = colors[i % len(colors)]
+    plt.scatter(row["switch_rate_per_min"], row["mean_qoe"],
+                s=120, color=c, edgecolor="black", linewidth=0.8,
+                label=cfg, zorder=5)
+
+plt.title("Component Ablation: Video QoE vs Switching Churn", fontsize=11, fontweight="bold")
+plt.xlabel("Switching Churn Rate (switches / min)", fontsize=9)
+plt.ylabel("Mean Cumulative Video QoE", fontsize=9)
+plt.grid(True, linestyle="--", alpha=0.5)
+plt.legend(loc="lower left", fontsize=7.5)
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "plot15_ablation_qoe_vs_churn.png", dpi=300)
+plt.savefig(OUTPUT_DIR / "plot15_ablation_qoe_vs_churn.pdf")
+plt.close()
+print("Saved -> plot15_ablation_qoe_vs_churn.png / .pdf")
+
+
+# ===========================================================================
+# PLOT 16: Statistical Significance & Effect Sizes (Cohen's d)
+# ===========================================================================
+df16 = pd.read_csv("logs/ablations/data_statistical_tests.csv")
+
+plt.figure(figsize=(6.5, 4.0))
+clean_df16 = df16.dropna(subset=["cohens_d"])
+comparisons = [c.replace("Full-Proposed vs ", "") for c in clean_df16["comparison"]]
+y_pos = np.arange(len(comparisons))
+
+bar_colors = ["#009E73" if sig else "#888888" for sig in clean_df16["statistically_significant"]]
+
+plt.barh(y_pos, clean_df16["cohens_d"], color=bar_colors, edgecolor="black", linewidth=0.5)
+plt.axvline(0.8, color="#D55E00", linestyle="--", linewidth=1.0, label="Large Effect ($d=0.8$)")
+plt.axvline(0.0, color="black", linestyle="-", linewidth=0.8)
+
+plt.title("Statistical Effect Size: Proposed vs Baselines/Ablations", fontsize=10.5, fontweight="bold")
+plt.xlabel("Cohen's $d$ Effect Size (Higher = Superior QoE)", fontsize=9)
+plt.yticks(y_pos, comparisons, fontsize=8)
+plt.legend(loc="lower right", fontsize=8)
+plt.grid(axis="x", linestyle="--", alpha=0.5)
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "plot16_statistical_significance_pvalues.png", dpi=300)
+plt.savefig(OUTPUT_DIR / "plot16_statistical_significance_pvalues.pdf")
+plt.close()
+print("Saved -> plot16_statistical_significance_pvalues.png / .pdf")
+
+print("\nAll 16 individual single plots generated successfully.")
+
 
 
