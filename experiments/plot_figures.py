@@ -10,6 +10,10 @@ Input CSV data files:
 - logs/baselines/data_qos_dwell.csv
 - logs/baselines/data_weight_dwell.csv
 - logs/baselines/data_weight_tradeoff.csv
+- logs/xai/data_weights_comparison.csv
+- logs/xai/data_feature_attributions.csv
+- logs/xai/data_counterfactual_margins.csv
+- logs/xai/data_explanation_stability.csv
 
 Output plot files:
 - plots/plot1_churn_noise_vs_shift.png & .pdf
@@ -17,6 +21,10 @@ Output plot files:
 - plots/plot3_qos_vs_dwell_stability.png & .pdf
 - plots/plot4_weight_server_dwell.png & .pdf
 - plots/plot5_weight_latency_vs_bandwidth.png & .pdf
+- plots/plot6_criteria_weights_comparison.png & .pdf
+- plots/plot7_feature_attributions_scenarios.png & .pdf
+- plots/plot8_counterfactual_margins.png & .pdf
+- plots/plot9_explanation_stability_noise.png & .pdf
 """
 
 from pathlib import Path
@@ -186,4 +194,138 @@ plt.savefig(OUTPUT_DIR / "plot5_weight_latency_vs_bandwidth.pdf")
 plt.close()
 print("Saved -> plot5_weight_latency_vs_bandwidth.png / .pdf")
 
-print("\nAll 5 individual single plots generated successfully.")
+
+# ===========================================================================
+# PLOT 6: Criteria Weights Comparison (AHP Profiles vs Objective Methods)
+# ===========================================================================
+df6 = pd.read_csv("logs/xai/data_weights_comparison.csv")
+
+plt.figure(figsize=(6.2, 4.0))
+criteria = ["latency", "effective_bw", "server_load", "packet_loss", "availability"]
+labels = ["Latency", "Effective BW", "Server Load", "Packet Loss", "Availability"]
+colors = ["#0072B2", "#009E73", "#E69F00", "#D55E00", "#CC79A7"]
+
+x = np.arange(len(df6))
+width = 0.15
+
+for i, crit in enumerate(criteria):
+    offset = (i - 2) * width
+    plt.bar(x + offset, df6[crit], width, label=labels[i], color=colors[i], edgecolor="black", linewidth=0.5)
+
+plt.title("Criteria Weights: HCI-Guided AHP vs Objective Methods", fontsize=11, fontweight="bold")
+plt.xlabel("Weighting Methodology", fontsize=9)
+plt.ylabel("Assigned Weight ($w_k$)", fontsize=9)
+plt.xticks(x, df6["method"], rotation=25, ha="right", fontsize=8)
+plt.ylim(0, 0.85)
+plt.legend(loc="upper left", fontsize=7.5, ncol=2)
+plt.grid(axis="y", linestyle="--", alpha=0.5)
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "plot6_criteria_weights_comparison.png", dpi=300)
+plt.savefig(OUTPUT_DIR / "plot6_criteria_weights_comparison.pdf")
+plt.close()
+print("Saved -> plot6_criteria_weights_comparison.png / .pdf")
+
+
+# ===========================================================================
+# PLOT 7: Exact Additive Feature Attributions Across Scenarios
+# ===========================================================================
+df7 = pd.read_csv("logs/xai/data_feature_attributions.csv")
+
+plt.figure(figsize=(6.5, 4.2))
+scenarios = df7["scenario"].tolist()
+y_pos = np.arange(len(scenarios))
+bar_height = 0.15
+
+crit_cols = ["phi_latency", "phi_effective_bw", "phi_server_load", "phi_packet_loss", "phi_availability"]
+crit_names = ["Latency", "Effective BW", "Server Load", "Packet Loss", "Availability"]
+crit_colors = ["#0072B2", "#009E73", "#E69F00", "#D55E00", "#CC79A7"]
+
+for i, col in enumerate(crit_cols):
+    offset = (i - 2) * bar_height
+    plt.barh(y_pos + offset, df7[col], bar_height, label=crit_names[i], color=crit_colors[i], edgecolor="black", linewidth=0.5)
+
+plt.axvline(0, color="black", linestyle="-", linewidth=0.8, alpha=0.7)
+plt.title("Exact Additive Feature Attributions ($\phi_k$) Across Canonical Scenarios", fontsize=10.5, fontweight="bold")
+plt.xlabel("Shapley Attribution Value $\phi_k = w_k \cdot \Delta u_k$", fontsize=9)
+plt.yticks(y_pos, scenarios, fontsize=8)
+plt.legend(loc="lower right", fontsize=7.5, ncol=2)
+plt.grid(axis="x", linestyle="--", alpha=0.5)
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "plot7_feature_attributions_scenarios.png", dpi=300)
+plt.savefig(OUTPUT_DIR / "plot7_feature_attributions_scenarios.pdf")
+plt.close()
+print("Saved -> plot7_feature_attributions_scenarios.png / .pdf")
+
+
+# ===========================================================================
+# PLOT 8: Counterfactual Decision Margin & Noise Boundary Trajectory (Scenario B)
+# ===========================================================================
+df8 = pd.read_csv("logs/xai/data_counterfactual_margins.csv")
+
+plt.figure(figsize=(6.0, 3.8))
+plt.plot(df8["time_s"], df8["decision_margin"], label="Decision Margin $M(t)$", color="#0072B2", linewidth=1.8)
+plt.plot(df8["time_s"], df8["switching_hurdle"], label="Switching Hurdle $\lambda_{\\text{switch}}$", color="#D55E00", linestyle="--", linewidth=1.4)
+plt.plot(df8["time_s"], df8["switching_hurdle"] + df8["noise_threshold"], label="Hurdle + Noise Band ($k\\hat{\\sigma}$)", color="#E69F00", linestyle=":", linewidth=1.4)
+
+# Shade noise suppression zone
+plt.fill_between(df8["time_s"], 0, df8["switching_hurdle"] + df8["noise_threshold"], color="#E69F00", alpha=0.12, label="Noise Suppression Zone")
+
+# Mark switch event
+switch_rows = df8[df8["action"] == "SWITCH"]
+if not switch_rows.empty:
+    sw_t = switch_rows["time_s"].iloc[0]
+    sw_m = switch_rows["decision_margin"].iloc[0]
+    plt.scatter([sw_t], [sw_m], color="#D55E00", s=70, zorder=6, label="Explainable SWITCH Event")
+    plt.annotate("Regime Shift Handover\n(Margin > Hurdle + Noise)", xy=(sw_t, sw_m), xytext=(sw_t - 9.0, sw_m + 0.035),
+                 arrowprops=dict(arrowstyle="->", color="black", lw=1.0), fontsize=7.5, fontweight="bold")
+
+plt.title("Counterfactual Decision Margin Trajectory (Scenario B)", fontsize=11, fontweight="bold")
+plt.xlabel("Time (s)", fontsize=9)
+plt.ylabel("Utility Margin / Hurdle", fontsize=9)
+plt.legend(loc="upper left", fontsize=7.5)
+plt.grid(True, linestyle="--", alpha=0.5)
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "plot8_counterfactual_margins.png", dpi=300)
+plt.savefig(OUTPUT_DIR / "plot8_counterfactual_margins.pdf")
+plt.close()
+print("Saved -> plot8_counterfactual_margins.png / .pdf")
+
+
+# ===========================================================================
+# PLOT 9: Explanation Stability & Churn Under Noise (Scenario A)
+# ===========================================================================
+df9 = pd.read_csv("logs/xai/data_explanation_stability.csv")
+
+plt.figure(figsize=(5.5, 3.8))
+methods = df9["method"].tolist()
+x = np.arange(len(methods))
+width = 0.35
+
+plt.bar(x - width/2, df9["explanation_churn_count"], width, label="Explanation Flips (Count)", color="#D55E00", edgecolor="black", linewidth=0.5)
+plt.bar(x + width/2, df9["explanation_stability_pct"], width, label="Explanation Stability (%)", color="#009E73", edgecolor="black", linewidth=0.5)
+
+for i in range(len(methods)):
+    churn = df9["explanation_churn_count"].iloc[i]
+    stab = df9["explanation_stability_pct"].iloc[i]
+    plt.text(i - width/2, churn + 1.5, f"{int(churn)}", ha="center", fontsize=8, fontweight="bold")
+    plt.text(i + width/2, stab + 1.5, f"{int(stab)}%", ha="center", fontsize=8, fontweight="bold")
+
+plt.title("Explanation Stability Under Telemetry Jitter", fontsize=11, fontweight="bold")
+plt.xlabel("Decision Framework", fontsize=9)
+plt.ylabel("Metric Value", fontsize=9)
+plt.xticks(x, ["Uncalibrated-Greedy\n(AHP-TOPSIS)", "Noise-Calibrated\n(Proposed)"], fontsize=8)
+plt.ylim(0, 115)
+plt.legend(loc="upper right", fontsize=8)
+plt.grid(axis="y", linestyle="--", alpha=0.5)
+plt.tight_layout()
+
+plt.savefig(OUTPUT_DIR / "plot9_explanation_stability_noise.png", dpi=300)
+plt.savefig(OUTPUT_DIR / "plot9_explanation_stability_noise.pdf")
+plt.close()
+print("Saved -> plot9_explanation_stability_noise.png / .pdf")
+
+print("\nAll 9 individual single plots generated successfully.")
+

@@ -43,6 +43,19 @@ from edge_switching.metrics import (
     compute_scenario_metrics,
 )
 
+from edge_switching.weighting import (
+    compute_ahp_weights,
+    get_literature_ahp_profile,
+    compute_entropy_weights,
+    compute_critic_weights,
+    compute_equal_weights,
+    get_all_weight_methods,
+)
+from edge_switching.explainer import (
+    EdgeSwitchingExplainer,
+    ExplanationResult,
+)
+
 __version__ = "0.1.0"
 
 __all__ = [
@@ -73,4 +86,12 @@ __all__ = [
     "compute_ping_pong_rate",
     "compute_mean_dwell_time",
     "compute_scenario_metrics",
+    "compute_ahp_weights",
+    "get_literature_ahp_profile",
+    "compute_entropy_weights",
+    "compute_critic_weights",
+    "compute_equal_weights",
+    "get_all_weight_methods",
+    "EdgeSwitchingExplainer",
+    "ExplanationResult",
 ]
