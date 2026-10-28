@@ -15,6 +15,7 @@ env/
 
 # Internal research and author planning documents (excluded from public artifact repo)
 docs/
+paper/
 
 # Reference PDFs and third-party copyright papers
 references/
