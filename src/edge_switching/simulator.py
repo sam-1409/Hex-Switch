@@ -234,6 +234,7 @@ class ClosedLoopSimulator:
             sid: [] for sid in self.servers
         }
         self.latest_telemetry: Dict[str, ServerTelemetry] = {}
+        self.telemetry_history: List[Dict[str, ServerTelemetry]] = []
 
         # Sync initial client placements
         for c in self.clients:
@@ -315,6 +316,8 @@ class ClosedLoopSimulator:
                 telemetry = self.generate_server_telemetry(sid)
                 self.latest_telemetry[sid] = telemetry
 
+        self.telemetry_history.append(dict(self.latest_telemetry))
+
         # Compile telemetry list for policy evaluation
         active_telemetries = [self.latest_telemetry[sid] for sid in self.servers if sid in self.latest_telemetry]
 
@@ -367,10 +370,17 @@ class ClosedLoopSimulator:
             else:
                 effective_bw = 0.0  # Zero throughput on outage
 
+            curr_lat = 999.0
+            if client.current_server_id in self.latest_telemetry:
+                curr_lat = self.latest_telemetry[client.current_server_id].latency_ms
+            elif srv:
+                curr_lat = srv.base_latency_ms
+
             stall_s, buf_s = client.step_playback(dt_s, effective_bw)
             client_metrics[client.client_id] = {
                 "server": client.current_server_id,
                 "effective_bw_mbps": effective_bw,
+                "latency_ms": curr_lat,
                 "buffer_s": buf_s,
                 "stall_s": stall_s,
                 "total_stalls": client.total_stalls,
@@ -397,3 +407,4 @@ class ClosedLoopSimulator:
             "servers": server_loads,
             "decisions": client_actions,
         }
+        

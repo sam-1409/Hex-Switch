@@ -82,6 +82,7 @@ class DecisionMatrix:
     utility_matrix_U: np.ndarray    # Shape: (M, K)
     feasible_mask: np.ndarray       # Shape: (M,) bool
     weight_vector_w: np.ndarray     # Shape: (K,)
+    raw_server_capacity: Optional[np.ndarray] = None  # Shape: (M,) raw provisioned server capacity
     criteria_order: List[Criterion] = field(default_factory=lambda: [
         Criterion.LATENCY,
         Criterion.EFFECTIVE_BW,
@@ -204,12 +205,14 @@ class QoSFormalizationEngine:
                 X[i, j] = raw_vals[j]
                 U[i, j] = self.normalize_criterion(c, raw_vals[j])
 
+        raw_caps = np.array([t.server_capacity_mbps for t in telemetries], dtype=float)
         return DecisionMatrix(
             server_ids=server_ids,
             raw_matrix_X=X,
             utility_matrix_U=U,
             feasible_mask=feasible_mask,
             weight_vector_w=w_vec,
+            raw_server_capacity=raw_caps,
             criteria_order=criteria
         )
 

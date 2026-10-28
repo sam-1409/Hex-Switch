@@ -11,7 +11,7 @@ Implements Scenarios A to F:
 """
 
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 from edge_switching.qos_model import Criterion, SystemConfig
@@ -22,6 +22,8 @@ from edge_switching.simulator import (
     NoiseDistribution,
     VideoClientState,
 )
+
+_TRACE_CACHE: Dict[str, Any] = {}
 
 
 def create_standard_servers() -> Dict[str, EdgeServerNode]:
@@ -64,6 +66,8 @@ def run_scenario(
     noise_sigma_lat: float = 3.0,
     noise_sigma_bw: float = 1.5,
     trace_path: Optional[Path] = None,
+    policy: Optional[Any] = None,
+    weights: Optional[Dict[Criterion, float]] = None,
 ) -> pd.DataFrame:
     """
     Execute a canonical evaluation scenario and return tabular log DataFrame.
@@ -91,19 +95,28 @@ def run_scenario(
     if scenario_id == "scenario_edge_infra":
         edge_dir = raw_data_dir / "edge-infrastructure-traces"
         if edge_dir.exists():
-            sim.trace_replayers["s1"] = TraceReplayer(edge_dir)
+            k = str(edge_dir)
+            if k not in _TRACE_CACHE:
+                _TRACE_CACHE[k] = TraceReplayer(edge_dir)
+            sim.trace_replayers["s1"] = _TRACE_CACHE[k]
             sim.servers["s1"].capacity_mbps = 850.0
             sim.servers["s1"].base_latency_ms = 15.0
 
     elif scenario_id == "scenario_puffer":
         puffer_dir = raw_data_dir / "puffer-fake-sample"
         if puffer_dir.exists():
-            sim.trace_replayers["s1"] = TraceReplayer(puffer_dir)
+            k = str(puffer_dir)
+            if k not in _TRACE_CACHE:
+                _TRACE_CACHE[k] = TraceReplayer(puffer_dir)
+            sim.trace_replayers["s1"] = _TRACE_CACHE[k]
             sim.servers["s1"].capacity_mbps = 50.0
             sim.servers["s1"].base_latency_ms = 40.0
 
     elif trace_path and trace_path.exists():
-        sim.trace_replayers["s1"] = TraceReplayer(trace_path)
+        k = str(trace_path)
+        if k not in _TRACE_CACHE:
+            _TRACE_CACHE[k] = TraceReplayer(trace_path)
+        sim.trace_replayers["s1"] = _TRACE_CACHE[k]
 
     records = []
     t = 0.0
@@ -153,8 +166,17 @@ def run_scenario(
         elif scenario_id == "scenario_puffer":
             event_label = EventLabel.NOISE
 
-        # Advance simulation
-        step_result = sim.step(dt_s=dt_s, current_event_label=event_label)
+        # Advance simulation with custom policy and weights if provided
+        policy_cb = None
+        if policy is not None:
+            policy_cb = lambda c, m, eng: policy.decide(c, m, eng, sim.telemetry_history)
+
+        step_result = sim.step(
+            dt_s=dt_s,
+            client_policy_callback=policy_cb,
+            weights=weights,
+            current_event_label=event_label,
+        )
 
         # Log primary client (client_0)
         c0 = step_result["clients"]["client_0"]
@@ -167,12 +189,13 @@ def run_scenario(
             "event_label": event_label.value,
             "client_server": c0["server"],
             "effective_bw_mbps": c0["effective_bw_mbps"],
+            "client_latency_ms": c0.get("latency_ms", 30.0),
             "buffer_s": c0["buffer_s"],
             "stall_s": c0["stall_s"],
-            "action": d0["action"],
-            "target_server": d0["target_server"],
-            "decision_margin": d0["decision_margin"],
-            "switching_hurdle": d0["switching_hurdle"],
+            "action": d0.get("action", "RETAIN"),
+            "target_server": d0.get("target_server", c0["server"]),
+            "decision_margin": float(d0.get("decision_margin", 0.0)),
+            "switching_hurdle": float(d0.get("switching_hurdle", 0.0)),
             "s1_active_users": step_result["servers"]["s1"]["active_users"],
             "s2_active_users": step_result["servers"]["s2"]["active_users"],
             "s3_active_users": step_result["servers"]["s3"]["active_users"],
