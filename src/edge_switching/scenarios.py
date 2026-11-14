@@ -1,15 +1,3 @@
-"""
-Canonical Scenario Builders and Runner for PerCom 2027 Evaluation.
-
-Implements Scenarios A to F:
-- Scenario A: Minor Fluctuation (Noise Only)
-- Scenario B: Meaningful Change (Regime Shift)
-- Scenario C: Constraint Failure (SLO Violation / Outage)
-- Scenario D: Multi-User Contention & Herding
-- Scenario E: Telemetry Staleness (Sensor Drop)
-- Scenario F: Client Mobility & Gradual Drift
-"""
-
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
@@ -22,12 +10,9 @@ from edge_switching.simulator import (
     NoiseDistribution,
     VideoClientState,
 )
-
 _TRACE_CACHE: Dict[str, Any] = {}
 
-
 def create_standard_servers() -> Dict[str, EdgeServerNode]:
-    """Create standard three-tier edge candidate servers."""
     return {
         "s1": EdgeServerNode(
             server_id="s1",
@@ -56,6 +41,34 @@ def create_standard_servers() -> Dict[str, EdgeServerNode]:
     }
 
 
+def create_tripolar_servers() -> Dict[str, EdgeServerNode]:
+    return {
+        "s1": EdgeServerNode(
+            server_id="s1",
+            name="MicroEdge-UltraLowLatency",
+            capacity_mbps=30.0,
+            base_latency_ms=12.0,
+            background_users=2,
+            max_capacity_users=20,
+        ),
+        "s2": EdgeServerNode(
+            server_id="s2",
+            name="Regional-HighCapacityCloudlet",
+            capacity_mbps=1200.0,
+            base_latency_ms=55.0,
+            background_users=10,
+            max_capacity_users=100,
+        ),
+        "s3": EdgeServerNode(
+            server_id="s3",
+            name="Metro-ReliableBalancedNode",
+            capacity_mbps=250.0,
+            base_latency_ms=28.0,
+            background_users=5,
+            max_capacity_users=50,
+        ),
+    }
+
 def run_scenario(
     scenario_id: str,
     duration_s: float = 60.0,
@@ -68,13 +81,24 @@ def run_scenario(
     trace_path: Optional[Path] = None,
     policy: Optional[Any] = None,
     weights: Optional[Dict[Criterion, float]] = None,
+    servers: Optional[Dict[str, EdgeServerNode]] = None,
+    initial_buffer_s: Optional[float] = None,
 ) -> pd.DataFrame:
-    """
-    Execute a canonical evaluation scenario and return tabular log DataFrame.
-    """
-    servers = create_standard_servers()
+    if servers is None:
+        if scenario_id == "scenario_low_buffer":
+            servers = {
+                "s1": EdgeServerNode("s1", "Edge-Local-Modest", capacity_mbps=40.0, base_latency_ms=25.0, background_users=4, max_capacity_users=20),
+                "s2": EdgeServerNode("s2", "Edge-Metro-HighCap", capacity_mbps=40.0, base_latency_ms=25.0, background_users=4, max_capacity_users=80),
+                "s3": EdgeServerNode("s3", "Edge-Regional-Backup", capacity_mbps=500.0, base_latency_ms=70.0, background_users=25, max_capacity_users=100),
+            }
+        elif scenario_id == "scenario_tripolar":
+            servers = create_tripolar_servers()
+        else:
+            servers = create_standard_servers()
+
+    init_buf = initial_buffer_s if initial_buffer_s is not None else (0.20 if scenario_id == "scenario_low_buffer" else 3.0)
     clients = [
-        VideoClientState(client_id=f"client_{i}", current_server_id="s1")
+        VideoClientState(client_id=f"client_{i}", current_server_id="s1", buffer_occupancy_s=init_buf)
         for i in range(num_clients)
     ]
     config = SystemConfig()
@@ -121,40 +145,33 @@ def run_scenario(
     records = []
     t = 0.0
     while t < duration_s:
-        # Ground-truth event labeling and perturbation injection
         event_label = EventLabel.NOISE
 
         if scenario_id == "scenario_a":
-            # Scenario A: Stationary noise only
             event_label = EventLabel.NOISE
 
         elif scenario_id == "scenario_b":
-            # Scenario B: Regime shift on s1 at t >= 20.0s
             if t >= 20.0:
                 event_label = EventLabel.REGIME_SHIFT
-                sim.servers["s1"].capacity_mbps = 80.0     # -73% capacity drop
-                sim.servers["s1"].base_latency_ms = 75.0   # +50ms latency inflation
+                sim.servers["s1"].capacity_mbps = 80.0
+                sim.servers["s1"].base_latency_ms = 75.0
 
         elif scenario_id == "scenario_c":
-            # Scenario C: Server outage on s1 at t >= 15.0s
             if t >= 15.0:
                 event_label = EventLabel.FAILURE
                 sim.servers["s1"].is_available = False
 
         elif scenario_id == "scenario_d":
-            # Scenario D: Flash crowd of 35 competing users joins s2 at t >= 20.0s
             if t >= 20.0:
                 event_label = EventLabel.FLASH_CROWD
                 sim.servers["s2"].background_users = 70
 
         elif scenario_id == "scenario_e":
-            # Scenario E: Telemetry staleness on s1 at t >= 18.0s (heartbeat packet drop)
             if t >= 18.0:
                 event_label = EventLabel.FAILURE
                 sim.servers["s1"].heartbeat_active = False
 
         elif scenario_id == "scenario_f":
-            # Scenario F: Client mobility drift (s1 latency increases, s2 decreases)
             if t >= 10.0:
                 event_label = EventLabel.GRADUAL_DRIFT
                 sim.servers["s1"].base_latency_ms = min(130.0, 25.0 + 1.8 * (t - 10.0))
@@ -166,7 +183,26 @@ def run_scenario(
         elif scenario_id == "scenario_puffer":
             event_label = EventLabel.NOISE
 
-        # Advance simulation with custom policy and weights if provided
+        elif scenario_id == "scenario_low_buffer":
+            if 3.0 <= t < 3.5:
+                event_label = EventLabel.REGIME_SHIFT
+                sim.servers["s2"].capacity_mbps = 500.0
+                for c in sim.clients:
+                    c.buffer_occupancy_s = min(c.buffer_occupancy_s, 0.08)
+            elif t >= 3.5:
+                event_label = EventLabel.NOISE
+                sim.servers["s2"].capacity_mbps = 500.0
+
+        elif scenario_id == "scenario_qos_stress":
+            sim.servers["s3"].base_latency_ms = 35.0
+            if t >= 6.0:
+                event_label = EventLabel.REGIME_SHIFT
+                sim.servers["s1"].base_latency_ms = 135.0
+                sim.servers["s1"].packet_loss = 0.08
+            if t >= 8.0:
+                event_label = EventLabel.FLASH_CROWD
+                sim.servers["s2"].background_users = 85
+
         policy_cb = None
         if policy is not None:
             policy_cb = lambda c, m, eng: policy.decide(c, m, eng, sim.telemetry_history)
@@ -178,7 +214,6 @@ def run_scenario(
             current_event_label=event_label,
         )
 
-        # Log primary client (client_0)
         c0 = step_result["clients"]["client_0"]
         d0 = step_result["decisions"]["client_0"]
 
@@ -189,7 +224,10 @@ def run_scenario(
             "event_label": event_label.value,
             "client_server": c0["server"],
             "effective_bw_mbps": c0["effective_bw_mbps"],
-            "client_latency_ms": c0.get("latency_ms", 30.0),
+            "client_latency_ms": c0["latency_ms"],
+            "client_packet_loss": c0["packet_loss"],
+            "client_available": c0["available"],
+            "bitrate_mbps": c0["bitrate_mbps"],
             "buffer_s": c0["buffer_s"],
             "stall_s": c0["stall_s"],
             "action": d0.get("action", "RETAIN"),
@@ -205,6 +243,5 @@ def run_scenario(
         })
 
         t += dt_s
-
     df = pd.DataFrame(records)
     return df

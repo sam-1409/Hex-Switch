@@ -1,14 +1,3 @@
-"""
-Scalability and Herding Dynamics Benchmark for Step 6.
-Target Venue: IEEE PerCom 2027 (A4E Workshop)
-
-Generates:
-1. data_client_scaling_herding.csv: Multi-user contention sweep (N=1 to 100 clients) measuring
-   average QoE, switch rate, ping-pong rate, and effective bandwidth across policies.
-2. data_server_scaling_latency.csv: Candidate server count sweep (M=3 to 32 servers) measuring
-   microsecond execution latency of matrix construction, selection, explanation, and auditing.
-"""
-
 import sys
 import time
 from pathlib import Path
@@ -45,9 +34,7 @@ from edge_switching.auditor import PostDecisionAuditor
 LOGS_DIR = ROOT_DIR / "logs" / "scalability"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-
 def run_client_scaling_herding():
-    """Evaluate multi-user contention and herding oscillations as client count scales (1 to 100)."""
     print("1. Running Multi-User Contention & Herding Sweep (N=1 to 100)...")
     client_counts = [1, 5, 10, 20, 35, 50, 75, 100]
     policies = {
@@ -59,9 +46,9 @@ def run_client_scaling_herding():
     w_video, _, _ = get_literature_ahp_profile("video_streaming")
     duration_s = 20.0
     dt_s = 0.5
-    num_seeds = 15
-
+    num_seeds = 30
     records = []
+    seed_level_records = []
 
     for n_clients in client_counts:
         print(f"  Evaluating N = {n_clients} clients...")
@@ -74,7 +61,6 @@ def run_client_scaling_herding():
 
             for seed in range(num_seeds):
                 servers = create_standard_servers()
-                # Distribute initial clients across servers
                 server_ids = list(servers.keys())
                 clients = [
                     VideoClientState(f"c{i}", server_ids[i % len(server_ids)], buffer_occupancy_s=3.0)
@@ -106,10 +92,9 @@ def run_client_scaling_herding():
                     telemetries = [sim.latest_telemetry[sid] for sid in servers if sid in sim.latest_telemetry]
                     if not telemetries:
                         continue
+                    matrix = sim.engine.build_matrices(telemetries, w_video, sim.current_time_s)
 
-                    # Each client evaluates policy
                     for client in sim.clients:
-                        matrix = sim.engine.build_matrices(telemetries, w_video, sim.current_time_s)
                         decision = policy.decide(
                             client=client,
                             matrix=matrix,
@@ -151,6 +136,14 @@ def run_client_scaling_herding():
                         total_client_steps += 1
 
                 qoe_list.append(float(np.mean(step_qoes)))
+                seed_level_records.append({
+                    "num_clients": n_clients, "policy": pol_name, "seed": seed,
+                    "mean_step_qoe_proxy": float(np.mean(step_qoes)),
+                    "switch_rate_per_min": (total_switches / max(1, n_clients)) / (duration_s / 60.0),
+                    "ping_pong_rate_pct": (ping_pong_switches / max(1, total_switches)) * 100.0 if total_switches else 0.0,
+                    "mean_effective_bw_mbps": float(np.mean(step_bws)),
+                    "qos_violation_rate": step_viols / max(1, total_client_steps),
+                })
                 sw_rate_per_min = (total_switches / max(1, n_clients)) / (duration_s / 60.0)
                 switch_rates.append(sw_rate_per_min)
                 pp_rate = (ping_pong_switches / max(1, total_switches)) * 100.0 if total_switches > 0 else 0.0
@@ -171,6 +164,7 @@ def run_client_scaling_herding():
                 "qos_violation_pct": round(float(np.mean(viol_list)), 2),
             })
 
+    pd.DataFrame(seed_level_records).to_csv(LOGS_DIR / "data_client_scaling_herding_seed_level.csv", index=False)
     df_scale = pd.DataFrame(records)
     out_csv = LOGS_DIR / "data_client_scaling_herding.csv"
     df_scale.to_csv(out_csv, index=False)
@@ -178,7 +172,6 @@ def run_client_scaling_herding():
 
 
 def run_server_scaling_latency():
-    """Measure microsecond execution latency as candidate server pool M scales (3 to 32)."""
     print("2. Measuring Algorithmic Execution Latency Scaling (M=3 to 32 servers)...")
     server_counts = [3, 5, 8, 12, 16, 24, 32]
     engine = QoSFormalizationEngine()
@@ -255,17 +248,15 @@ def run_server_scaling_latency():
     df_serv.to_csv(out_csv, index=False)
     print(f"  Saved -> {out_csv.name}")
 
-
 def main():
     print("=" * 70)
-    print("STEP 6: RUNNING SCALABILITY & HERDING BENCHMARK")
+    print("HEX-SWITCH: MULTI-USER SCALABILITY & HERDING BENCHMARK")
     print("=" * 70)
 
     run_client_scaling_herding()
     run_server_scaling_latency()
 
     print("\n[SUCCESS] Scalability benchmarks exported successfully.")
-
 
 if __name__ == "__main__":
     main()

@@ -1,7 +1,5 @@
 name: edge-switching
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
   - defaults
 dependencies:
@@ -17,8 +15,6 @@ dependencies:
   - typer
   - ruff
   - mypy
-  - pytorch
-  - torchvision
-  - pytorch-cuda=12.1
   - pip:
+      - -e .
       - pytest-cov

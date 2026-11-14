@@ -1,14 +1,3 @@
-"""
-Unit tests for Step 1: Application and QoS Formalization.
-
-Verifies:
-- Effective bandwidth b_eff with the (+1)-user effect and path bottleneck.
-- Feasibility pruning (hard constraints vs soft objectives).
-- Normalization and matrix dimensions (X vs U vs w).
-- Multi-criteria trade-off (best value on one metric does not make the best server).
-- Switching cost hurdle lambda_switch and buffer starvation protection.
-"""
-
 import pytest
 import numpy as np
 
@@ -20,9 +9,7 @@ from edge_switching import (
     SystemConfig,
 )
 
-
 def test_effective_bandwidth_plus_one_user_and_bottleneck():
-    """Verify b_eff = min(C_path, C_srv / (N + 1)) strictly models contention."""
     # Scenario 1: Path bottleneck dominates
     t1 = ServerTelemetry(
         server_id="s1",
@@ -51,9 +38,7 @@ def test_effective_bandwidth_plus_one_user_and_bottleneck():
     )
     assert t2.compute_effective_bandwidth() == 5.0
 
-
 def test_hard_feasibility_constraints():
-    """Verify feasibility filter rejects servers violating safety SLOs."""
     engine = QoSFormalizationEngine()
     now = 100.0
 
@@ -80,9 +65,7 @@ def test_hard_feasibility_constraints():
     is_feas, _ = engine.check_feasibility(t_valid, now)
     assert is_feas
 
-
 def test_matrix_dimensions_and_utility_polarities():
-    """Verify X vs U vs w dimensions and [0, 1] utility bounds."""
     engine = QoSFormalizationEngine()
     now = 50.0
 
@@ -109,23 +92,14 @@ def test_matrix_dimensions_and_utility_polarities():
     assert np.all(matrix.utility_matrix_U >= 0.0)
     assert np.all(matrix.utility_matrix_U <= 1.0)
 
-    # Polarity check: lower latency must yield higher utility
-    # s1 (20ms) should have higher latency utility than s3 (100ms)
     lat_col = matrix.criteria_order.index(Criterion.LATENCY)
     assert matrix.utility_matrix_U[0, lat_col] > matrix.utility_matrix_U[2, lat_col]
 
-
 def test_best_on_one_metric_does_not_make_best_server():
-    """
-    Advisor Requirement: A server best on a single metric (e.g. latency)
-    must not win if it suffers on other key criteria (packet loss, load).
-    """
     engine = QoSFormalizationEngine()
     now = 10.0
 
-    # s1 has lowest latency (12 ms) but poor packet loss (6%) and high load (85%)
     s1 = ServerTelemetry("s1_low_lat", 12.0, 300.0, 20, 10.0, 0.85, 0.06, True, now)
-    # s2 has higher latency (30 ms) but zero loss, low load (20%), and strong bandwidth
     s2 = ServerTelemetry("s2_balanced", 30.0, 500.0, 4, 40.0, 0.20, 0.00, True, now)
 
     weights = {
@@ -143,18 +117,11 @@ def test_best_on_one_metric_does_not_make_best_server():
     assert decision["action"] == "SWITCH"
     assert decision["target_server"] == "s2_balanced"
 
-
 def test_switching_cost_hurdle_prevents_marginal_churn():
-    """
-    Verify switching hurdle lambda_switch prevents switching when candidate
-    offers only marginal, jitter-level improvements (hysteresis principle).
-    """
     engine = QoSFormalizationEngine(SystemConfig(base_switching_cost=0.08))
     now = 20.0
 
-    # Current server s_curr has good utility (~0.75)
     s_curr = ServerTelemetry("s_curr", 35.0, 300.0, 10, 25.0, 0.4, 0.005, True, now)
-    # Candidate s_cand is marginally better (e.g. 30ms latency vs 35ms)
     s_cand = ServerTelemetry("s_cand", 30.0, 300.0, 10, 25.0, 0.4, 0.005, True, now)
 
     weights = {c: 0.20 for c in Criterion}
@@ -162,18 +129,13 @@ def test_switching_cost_hurdle_prevents_marginal_churn():
 
     decision = engine.evaluate_switching_decision(matrix, current_server_id="s_curr", buffer_occupancy_s=2.5)
 
-    # Static utility of s_cand is slightly higher:
     assert decision["static_utilities"]["s_cand"] > decision["static_utilities"]["s_curr"]
-    # BUT net utility after subtracting hurdle 0.08 is lower:
     assert decision["net_utilities"]["s_cand"] < decision["net_utilities"]["s_curr"]
-    # Therefore, action must be RETAIN!
     assert decision["action"] == "RETAIN"
     assert decision["target_server"] == "s_curr"
     assert decision["decision_margin"] > 0.0
 
-
 def test_buffer_starvation_amplifies_switching_hurdle():
-    """Verify low buffer (< 150 ms) penalizes switching to prevent stalls."""
     config = SystemConfig(base_switching_cost=0.05, switch_delay_s=0.20, starvation_penalty_mult=2.0)
     engine = QoSFormalizationEngine(config)
     now = 30.0

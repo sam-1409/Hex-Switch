@@ -33,7 +33,6 @@ plots/*
 !logs/.gitkeep
 !experiments/runs/.gitkeep
 !plots/.gitkeep
-!plots/generated/.gitkeep
 
 # IDE / OS
 .idea/

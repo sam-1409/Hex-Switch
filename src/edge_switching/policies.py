@@ -1,18 +1,3 @@
-"""
-Server Selection Policies and Baseline Suite for Edge Video Streaming.
-
-Implements 8 formal baselines and the Proposed Noise-Normalized Margin Policy:
-1. NearestServerPolicy (fixed proximity)
-2. MinLatencyPolicy (greedy minimum latency)
-3. MaxTotalBandwidthPolicy (greedy total server capacity, ignores contention)
-4. MaxEffectiveBandwidthPolicy (greedy effective per-user bandwidth)
-5. AhpTopsisPolicy (classical MCDM TOPSIS ideal-solution distance)
-6. HysteresisOnlyPolicy (static absolute hurdle threshold)
-7. QoEGreedyPolicy (instantaneous greedy QoE, zero switching cost awareness)
-8. HindsightOraclePolicy (non-causal ground truth benchmark)
-9. ProposedMarginPolicy (feasibility filter + noise-normalized margin + dwell time)
-"""
-
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 import numpy as np
@@ -26,9 +11,7 @@ from edge_switching.qos_model import (
 )
 from edge_switching.simulator import VideoClientState
 
-
 class BaseSelectionPolicy(ABC):
-    """Abstract base class for edge server selection policies."""
 
     def __init__(self, name: str):
         self.name = name
@@ -41,38 +24,26 @@ class BaseSelectionPolicy(ABC):
         engine: QoSFormalizationEngine,
         telemetry_history: Optional[List[Dict[str, ServerTelemetry]]] = None,
     ) -> Dict[str, Any]:
-        """
-        Evaluate policy and return structured decision dictionary:
-        {
-            "action": "RETAIN" | "SWITCH" | "EMERGENCY_RETAIN",
-            "target_server": str,
-            "decision_margin": float,
-            "policy_name": str,
-            ...
-        }
-        """
         pass
 
 
 class NearestServerPolicy(BaseSelectionPolicy):
-    """Fixed-mapping baseline: always connects to the geographically nearest server (s1)."""
-
     def __init__(self, target_server_id: str = "s1"):
         super().__init__("Nearest-Server")
         self.target_server_id = target_server_id
 
     def decide(self, client, matrix, engine, telemetry_history=None):
         target = self.target_server_id
-        # Check feasibility; if down, fallback to any feasible
+        avail_col = matrix.criteria_order.index(Criterion.AVAILABILITY)
         target_idx = matrix.server_ids.index(target) if target in matrix.server_ids else -1
-        if target_idx >= 0 and matrix.feasible_mask[target_idx]:
+
+        if target_idx >= 0 and matrix.raw_matrix_X[target_idx, avail_col] > 0.5:
             action = "RETAIN" if client.current_server_id == target else "SWITCH"
             return {"action": action, "target_server": target, "decision_margin": 0.0, "policy_name": self.name}
 
-        # Fallback to first feasible
-        feasible_indices = [i for i, f in enumerate(matrix.feasible_mask) if f]
-        if feasible_indices:
-            fallback = matrix.server_ids[feasible_indices[0]]
+        online_indices = [i for i in range(len(matrix.server_ids)) if matrix.raw_matrix_X[i, avail_col] > 0.5]
+        if online_indices:
+            fallback = matrix.server_ids[online_indices[0]]
             action = "RETAIN" if client.current_server_id == fallback else "SWITCH"
             return {"action": action, "target_server": fallback, "decision_margin": 0.0, "policy_name": self.name}
 
@@ -80,48 +51,41 @@ class NearestServerPolicy(BaseSelectionPolicy):
 
 
 class MinLatencyPolicy(BaseSelectionPolicy):
-    """Greedy selection: chooses feasible server with minimum observed latency."""
-
     def __init__(self):
         super().__init__("Min-Latency")
 
     def decide(self, client, matrix, engine, telemetry_history=None):
         lat_col = matrix.criteria_order.index(Criterion.LATENCY)
-        feasible_indices = [i for i, f in enumerate(matrix.feasible_mask) if f]
-        if not feasible_indices:
+        avail_col = matrix.criteria_order.index(Criterion.AVAILABILITY)
+        online_indices = [i for i in range(len(matrix.server_ids)) if matrix.raw_matrix_X[i, avail_col] > 0.5]
+        if not online_indices:
             return {"action": "EMERGENCY_RETAIN", "target_server": client.current_server_id, "decision_margin": 0.0, "policy_name": self.name}
 
-        # Find feasible candidate with lowest raw latency
-        best_idx = min(feasible_indices, key=lambda i: matrix.raw_matrix_X[i, lat_col])
+        best_idx = min(online_indices, key=lambda i: matrix.raw_matrix_X[i, lat_col])
         target = matrix.server_ids[best_idx]
         action = "RETAIN" if target == client.current_server_id else "SWITCH"
         return {"action": action, "target_server": target, "decision_margin": 0.0, "policy_name": self.name}
 
-
 class MaxTotalBandwidthPolicy(BaseSelectionPolicy):
-    """Greedy total capacity: chooses server with highest raw capacity (ignores user load)."""
-
     def __init__(self):
         super().__init__("Max-Total-BW")
 
     def decide(self, client, matrix, engine, telemetry_history=None):
-        feasible_indices = [i for i, f in enumerate(matrix.feasible_mask) if f]
-        if not feasible_indices:
+        avail_col = matrix.criteria_order.index(Criterion.AVAILABILITY)
+        online_indices = [i for i in range(len(matrix.server_ids)) if matrix.raw_matrix_X[i, avail_col] > 0.5]
+        if not online_indices:
             return {"action": "EMERGENCY_RETAIN", "target_server": client.current_server_id, "decision_margin": 0.0, "policy_name": self.name}
 
-        # Select by highest raw provisioned server capacity
         if getattr(matrix, "raw_server_capacity", None) is not None:
-            best_idx = max(feasible_indices, key=lambda i: matrix.raw_server_capacity[i])
+            best_idx = max(online_indices, key=lambda i: matrix.raw_server_capacity[i])
         else:
-            best_idx = max(feasible_indices, key=lambda i: matrix.raw_matrix_X[i, 1])
+            best_idx = max(online_indices, key=lambda i: matrix.raw_matrix_X[i, 1])
         target = matrix.server_ids[best_idx]
         action = "RETAIN" if target == client.current_server_id else "SWITCH"
         return {"action": action, "target_server": target, "decision_margin": 0.0, "policy_name": self.name}
 
 
 class MaxEffectiveBandwidthPolicy(BaseSelectionPolicy):
-    """Greedy effective throughput: chooses feasible server with highest per-user bandwidth."""
-
     def __init__(self):
         super().__init__("Max-Effective-BW")
 
@@ -138,11 +102,6 @@ class MaxEffectiveBandwidthPolicy(BaseSelectionPolicy):
 
 
 class AhpTopsisPolicy(BaseSelectionPolicy):
-    """
-    Classical MCDM baseline (AHP-TOPSIS).
-    Ranks candidates by relative closeness to positive ideal solution using Euclidean distance.
-    Zero switching cost or hysteresis awareness.
-    """
 
     def __init__(self):
         super().__init__("AHP-TOPSIS")
@@ -152,11 +111,9 @@ class AhpTopsisPolicy(BaseSelectionPolicy):
         if not feasible_indices:
             return {"action": "EMERGENCY_RETAIN", "target_server": client.current_server_id, "decision_margin": 0.0, "policy_name": self.name}
 
-        # Weighted normalized matrix for feasible candidates
         sub_U = matrix.utility_matrix_U[feasible_indices, :]
         V = sub_U * matrix.weight_vector_w
 
-        # Ideal solutions: A_plus = max across candidates, A_minus = min across candidates
         a_plus = np.max(V, axis=0)
         a_minus = np.min(V, axis=0)
 
@@ -164,7 +121,6 @@ class AhpTopsisPolicy(BaseSelectionPolicy):
         d_plus = np.sqrt(np.sum((V - a_plus) ** 2, axis=1))
         d_minus = np.sqrt(np.sum((V - a_minus) ** 2, axis=1))
 
-        # Relative closeness coefficient C_i = d_minus / (d_plus + d_minus)
         denom = d_plus + d_minus
         closeness = np.where(denom > 0, d_minus / denom, 0.5)
 
@@ -181,14 +137,7 @@ class AhpTopsisPolicy(BaseSelectionPolicy):
             "closeness_scores": {matrix.server_ids[feasible_indices[k]]: float(closeness[k]) for k in range(len(feasible_indices))}
         }
 
-
 class HysteresisOnlyPolicy(BaseSelectionPolicy):
-    """
-    Static Hysteresis Baseline:
-    Computes static utility U_static = w^T u. Switches only if U_static(best) - U_static(curr) > theta_hyst.
-    Lacks noise adaptation or buffer starvation weighting.
-    """
-
     def __init__(self, hysteresis_threshold: float = 0.08):
         super().__init__("Static-Hysteresis")
         self.theta_hyst = hysteresis_threshold
@@ -217,13 +166,7 @@ class HysteresisOnlyPolicy(BaseSelectionPolicy):
 
         return {"action": "RETAIN", "target_server": curr_id, "decision_margin": float(self.theta_hyst - delta_u), "policy_name": self.name}
 
-
 class QoEGreedyPolicy(BaseSelectionPolicy):
-    """
-    Greedy Video QoE: selects server maximizing instantaneous expected QoE
-    without accounting for switching connection interruption or playout stalls.
-    """
-
     def __init__(self):
         super().__init__("QoE-Greedy")
 
@@ -235,7 +178,6 @@ class QoEGreedyPolicy(BaseSelectionPolicy):
         bw_col = matrix.criteria_order.index(Criterion.EFFECTIVE_BW)
         lat_col = matrix.criteria_order.index(Criterion.LATENCY)
 
-        # Expected instantaneous QoE proxy: Bitrate - (0.05 * Latency)
         def expected_qoe(idx):
             bw = matrix.raw_matrix_X[idx, bw_col]
             lat = matrix.raw_matrix_X[idx, lat_col]
@@ -246,21 +188,12 @@ class QoEGreedyPolicy(BaseSelectionPolicy):
         action = "RETAIN" if target == client.current_server_id else "SWITCH"
         return {"action": action, "target_server": target, "decision_margin": 0.0, "policy_name": self.name}
 
-
 class ProposedMarginPolicy(BaseSelectionPolicy):
-    """
-    Our Proposed Selection Policy:
-    1. Feasibility Pruning (hard latency, capacity, staleness constraints).
-    2. Dynamic switching hurdle lambda_switch with buffer starvation multiplier.
-    3. Noise-Normalized Margin: Delta J > lambda_switch + k_noise * sigma_est.
-    4. Minimum Dwell Time enforcement to prevent ping-pong oscillation.
-    """
-
     def __init__(
         self,
         base_hurdle: float = 0.05,
-        k_noise: float = 1.65,  # 95% one-sided confidence z-score
-        min_dwell_steps: int = 4, # Minimum steps on a server before switching (~2s)
+        k_noise: float = 1.65,
+        min_dwell_steps: int = 4,
         window_size: int = 10,
     ):
         super().__init__("Proposed-Margin-Policy")
@@ -268,7 +201,7 @@ class ProposedMarginPolicy(BaseSelectionPolicy):
         self.k_noise = k_noise
         self.min_dwell_steps = min_dwell_steps
         self.window_size = window_size
-        self.dwell_counters: Dict[str, int] = {}  # client_id -> steps spent on current server
+        self.dwell_counters: Dict[str, int] = {} 
 
     def decide(self, client, matrix, engine, telemetry_history=None):
         curr_id = client.current_server_id
@@ -278,7 +211,7 @@ class ProposedMarginPolicy(BaseSelectionPolicy):
         curr_idx = matrix.server_ids.index(curr_id) if curr_id in matrix.server_ids else -1
         curr_feasible = (curr_idx >= 0 and matrix.feasible_mask[curr_idx])
 
-        # Step 1: Evaluate formal decision engine from Step 1
+        # Evaluate formal decision engine
         raw_decision = engine.evaluate_switching_decision(
             matrix,
             current_server_id=curr_id,
@@ -289,7 +222,6 @@ class ProposedMarginPolicy(BaseSelectionPolicy):
         action = str(raw_decision["action"])
         hurdle = float(raw_decision["switching_hurdle"])
 
-        # If current server is NOT feasible, force emergency switch regardless of dwell/noise
         if not curr_feasible:
             self.dwell_counters[client.client_id] = 0
             return {
@@ -311,8 +243,6 @@ class ProposedMarginPolicy(BaseSelectionPolicy):
                 "reason": "Utility gain does not exceed switching hurdle",
             }
 
-        # Action is SWITCH. Apply Noise-Normalized Margin Test and Dwell Constraint:
-        # Check dwell constraint:
         if dwell < self.min_dwell_steps:
             return {
                 "action": "RETAIN",
@@ -359,7 +289,6 @@ class ProposedMarginPolicy(BaseSelectionPolicy):
 
 
 def get_baseline_suite(default_target: str = "s1") -> Dict[str, BaseSelectionPolicy]:
-    """Return dictionary of all 8 standardized evaluation policies."""
     return {
         "Nearest": NearestServerPolicy(target_server_id=default_target),
         "Min-Latency": MinLatencyPolicy(),
@@ -370,4 +299,3 @@ def get_baseline_suite(default_target: str = "s1") -> Dict[str, BaseSelectionPol
         "QoE-Greedy": QoEGreedyPolicy(),
         "Proposed-Margin": ProposedMarginPolicy(),
     }
-

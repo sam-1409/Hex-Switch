@@ -1,17 +1,8 @@
-"""
-Comprehensive Baseline Evaluation & Weight Sensitivity Benchmark.
-Target Venue: IEEE PerCom 2027 (A4E Workshop)
-
-Runs:
-1. Full 8-policy baseline comparison across 8 scenarios with >= 30 seeds.
-2. Formal metrics calculation: QoE, QoS Violation Rate, Switch Rate, Ping-Pong Rate, Dwell Time.
-3. Weight sensitivity sweep evaluating subjective preference trade-offs.
-4. Publication-ready vector PDF plots following configs/plot_style.mplstyle.
-"""
-
 import sys
+import argparse
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from scipy import stats
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "src"))
 
@@ -38,9 +29,7 @@ CONFIG_STYLE = ROOT_DIR / "configs" / "plot_style.mplstyle"
 LOGS_DIR = ROOT_DIR / "logs" / "baselines"
 PLOTS_DIR = ROOT_DIR / "plots" / "generated"
 
-
 def get_fresh_policy(name: str):
-    """Instantiate a fresh policy instance to reset internal dwell counters."""
     if name == "Nearest":
         return NearestServerPolicy(target_server_id="s1")
     elif name == "Min-Latency":
@@ -60,14 +49,9 @@ def get_fresh_policy(name: str):
     else:
         raise ValueError(f"Unknown policy name: {name}")
 
-
 def run_all_baselines_benchmark(num_seeds: int = 30) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Run all 8 policies across 8 scenarios with num_seeds independent seeds.
-    """
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-
     policies = [
         "Nearest",
         "Min-Latency",
@@ -78,7 +62,6 @@ def run_all_baselines_benchmark(num_seeds: int = 30) -> Tuple[pd.DataFrame, pd.D
         "QoE-Greedy",
         "Proposed-Margin",
     ]
-
     scenarios = [
         "scenario_a",
         "scenario_b",
@@ -88,15 +71,14 @@ def run_all_baselines_benchmark(num_seeds: int = 30) -> Tuple[pd.DataFrame, pd.D
         "scenario_f",
         "scenario_edge_infra",
         "scenario_puffer",
+        "scenario_qos_stress",
     ]
 
     seeds = list(range(42, 42 + num_seeds))
     total_runs = len(policies) * len(scenarios) * len(seeds)
     print(f"Starting Baseline Evaluation: {len(policies)} policies x {len(scenarios)} scenarios x {len(seeds)} seeds = {total_runs} runs...")
-
     raw_records = []
     run_idx = 0
-
     for pol_name in policies:
         for sc in scenarios:
             for s in seeds:
@@ -131,7 +113,6 @@ def run_all_baselines_benchmark(num_seeds: int = 30) -> Tuple[pd.DataFrame, pd.D
     raw_df.to_csv(raw_csv, index=False)
     print(f"Saved raw execution logs to: {raw_csv}")
 
-    # Compute summary statistics: mean, std, 95% CI
     summary_records = []
     grouped = raw_df.groupby(["policy", "scenario"])
     for (pol, sc), g in grouped:
@@ -140,7 +121,7 @@ def run_all_baselines_benchmark(num_seeds: int = 30) -> Tuple[pd.DataFrame, pd.D
         for metric in ["cumulative_qoe", "total_switches", "switch_rate_per_min", "ping_pong_rate", "mean_dwell_time_s", "qos_violation_rate"]:
             mean_val = float(g[metric].mean())
             std_val = float(g[metric].std()) if n > 1 else 0.0
-            ci95 = float(1.96 * std_val / np.sqrt(n)) if n > 1 else 0.0
+            ci95 = float(stats.t.ppf(0.975, n - 1) * std_val / np.sqrt(n)) if n > 1 else 0.0
             rec[f"{metric}_mean"] = mean_val
             rec[f"{metric}_std"] = std_val
             rec[f"{metric}_ci95"] = ci95
@@ -150,15 +131,9 @@ def run_all_baselines_benchmark(num_seeds: int = 30) -> Tuple[pd.DataFrame, pd.D
     summary_csv = LOGS_DIR / "baseline_summary.csv"
     summary_df.to_csv(summary_csv, index=False)
     print(f"Saved statistical summary to: {summary_csv}")
-
     return raw_df, summary_df
 
-
-def run_weight_sensitivity_benchmark(num_seeds: int = 15) -> pd.DataFrame:
-    """
-    Evaluate how different weight configurations affect candidate server selection
-    and resulting QoE under Proposed-Margin policy.
-    """
+def run_weight_sensitivity_benchmark(num_seeds: int = 30) -> pd.DataFrame:
     weight_profiles = {
         "Equal": {
             Criterion.LATENCY: 0.20,
@@ -197,7 +172,7 @@ def run_weight_sensitivity_benchmark(num_seeds: int = 15) -> pd.DataFrame:
         },
     }
 
-    test_scenarios = ["scenario_a", "scenario_b", "scenario_f", "scenario_edge_infra"]
+    test_scenarios = ["scenario_tripolar", "scenario_a", "scenario_b", "scenario_f"]
     seeds = list(range(100, 100 + num_seeds))
     records = []
 
@@ -218,7 +193,6 @@ def run_weight_sensitivity_benchmark(num_seeds: int = 15) -> pd.DataFrame:
                 )
                 metrics = compute_scenario_metrics(df, dt_s=0.5)
 
-                # Count time spent on each server
                 srv_counts = df["client_server"].value_counts(normalize=True)
                 s1_pct = float(srv_counts.get("s1", 0.0))
                 s2_pct = float(srv_counts.get("s2", 0.0))
@@ -246,13 +220,9 @@ def run_weight_sensitivity_benchmark(num_seeds: int = 15) -> pd.DataFrame:
 
 
 def plot_baseline_comparison(raw_df: pd.DataFrame, summary_df: pd.DataFrame):
-    """
-    Generate IEEE PerCom standard 3-panel comparative performance plot.
-    """
     plt.style.use(CONFIG_STYLE)
     fig, axes = plt.subplots(1, 3, figsize=(10.5, 3.2))
 
-    # Color palette (Okabe-Ito / Colorblind safe)
     palette = {
         "Nearest": "#888888",
         "Min-Latency": "#E69F00",
@@ -263,12 +233,7 @@ def plot_baseline_comparison(raw_df: pd.DataFrame, summary_df: pd.DataFrame):
         "QoE-Greedy": "#D55E00",
         "Proposed-Margin": "#CC79A7",
     }
-
     policies = list(palette.keys())
-
-    # -------------------------------------------------------------
-    # Panel 1: Churn under Noise (Scenario A) vs Real Events (Scenario B)
-    # -------------------------------------------------------------
     ax1 = axes[0]
     sc_noise = "scenario_a"
     sc_shift = "scenario_b"
@@ -292,32 +257,30 @@ def plot_baseline_comparison(raw_df: pd.DataFrame, summary_df: pd.DataFrame):
     ax1.legend(loc="upper left", fontsize=7, framealpha=0.8)
     ax1.grid(axis="y", linestyle="--", alpha=0.5)
 
-    # -------------------------------------------------------------
-    # Panel 2: Mean Cumulative Video QoE across All Scenarios (with 95% CI)
-    # -------------------------------------------------------------
     ax2 = axes[1]
-    overall_qoe = raw_df.groupby("policy")["cumulative_qoe"].agg(["mean", "std", "count"])
-    overall_qoe["ci95"] = 1.96 * overall_qoe["std"] / np.sqrt(overall_qoe["count"])
+    per_seed_qoe = raw_df.groupby(["policy", "seed"], as_index=False)["cumulative_qoe"].mean()
+    overall_qoe = per_seed_qoe.groupby("policy")["cumulative_qoe"].agg(["mean", "std", "count"])
+    overall_qoe["ci95"] = [
+        stats.t.ppf(0.975, int(n) - 1) * sd / np.sqrt(n) if n > 1 else 0.0
+        for sd, n in zip(overall_qoe["std"], overall_qoe["count"])
+    ]
 
     qoe_means = [overall_qoe.loc[p]["mean"] for p in policies]
     qoe_cis = [overall_qoe.loc[p]["ci95"] for p in policies]
     bar_colors = [palette[p] for p in policies]
 
     ax2.bar(x, qoe_means, yerr=qoe_cis, capsize=3, color=bar_colors, edgecolor="black", linewidth=0.5, alpha=0.9)
-    ax2.set_ylabel("Cumulative Video QoE (ITU-T P.1203)")
+    ax2.set_ylabel("Cumulative linear QoE proxy (score units)")
     ax2.set_title("(b) Average Video QoE (All Scenarios, 95% CI)")
     ax2.set_xticks(x)
     ax2.set_xticklabels(policies, rotation=45, ha="right", fontsize=7)
     ax2.grid(axis="y", linestyle="--", alpha=0.5)
 
-    # -------------------------------------------------------------
-    # Panel 3: QoS Violation Rate vs Mean Dwell Time Trade-off
-    # -------------------------------------------------------------
     ax3 = axes[2]
     overall_qos = raw_df.groupby("policy")[["qos_violation_rate", "mean_dwell_time_s"]].mean()
 
     for p in policies:
-        qos_v = overall_qos.loc[p]["qos_violation_rate"] * 100.0  # as percentage
+        qos_v = overall_qos.loc[p]["qos_violation_rate"] * 100.0
         dwell = overall_qos.loc[p]["mean_dwell_time_s"]
         ax3.scatter(dwell, qos_v, color=palette[p], s=80, edgecolors="black", linewidth=0.8, label=p, zorder=5)
 
@@ -335,18 +298,13 @@ def plot_baseline_comparison(raw_df: pd.DataFrame, summary_df: pd.DataFrame):
     plt.close()
     print(f"Generated comparison plots:\n  {pdf_out}\n  {png_out}")
 
-
 def plot_weight_sensitivity(weight_df: pd.DataFrame):
-    """
-    Generate plot demonstrating how subjective preference vectors alter server allocation.
-    """
     plt.style.use(CONFIG_STYLE)
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7.2, 3.2))
 
     profiles = list(weight_df["profile"].unique())
     grouped = weight_df.groupby("profile")
 
-    # Panel 1: Dwell Fraction by Server
     s1_means = [grouped.get_group(p)["s1_dwell_fraction"].mean() * 100.0 for p in profiles]
     s2_means = [grouped.get_group(p)["s2_dwell_fraction"].mean() * 100.0 for p in profiles]
     s3_means = [grouped.get_group(p)["s3_dwell_fraction"].mean() * 100.0 for p in profiles]
@@ -367,7 +325,6 @@ def plot_weight_sensitivity(weight_df: pd.DataFrame):
     ax1.legend(loc="upper right", fontsize=7, framealpha=0.8)
     ax1.grid(axis="y", linestyle="--", alpha=0.5)
 
-    # Panel 2: Latency vs Bitrate Trade-off Across Profiles
     lat_means = [grouped.get_group(p)["mean_latency_ms"].mean() for p in profiles]
     bw_means = [grouped.get_group(p)["mean_bandwidth_mbps"].mean() for p in profiles]
 
@@ -389,25 +346,26 @@ def plot_weight_sensitivity(weight_df: pd.DataFrame):
     plt.close()
     print(f"Generated weight sensitivity plots:\n  {pdf_out}\n  {png_out}")
 
-
 def main():
+    parser = argparse.ArgumentParser(description="HEX-Switch baseline and weight-sensitivity experiments")
+    parser.add_argument("--baseline-seeds", type=int, default=30)
+    parser.add_argument("--weight-seeds", type=int, default=30)
+    parser.add_argument("--baseline-only", action="store_true", help="Run baseline suite only")
+    parser.add_argument("--weight-only", action="store_true", help="Run weight sensitivity only")
+    args = parser.parse_args()
+    if args.baseline_only and args.weight_only:
+        parser.error("--baseline-only and --weight-only are mutually exclusive")
+
     print("=" * 70)
-    print("STEP 3: BASELINE SUITE & WEIGHT SENSITIVITY BENCHMARK")
+    print("HEX-SWITCH: BASELINE SUITE & WEIGHT SENSITIVITY")
     print("=" * 70)
-
-    # 1. Run 30-seed baseline evaluation
-    raw_df, summary_df = run_all_baselines_benchmark(num_seeds=30)
-
-    # 2. Run weight sensitivity sweep
-    weight_df = run_weight_sensitivity_benchmark(num_seeds=15)
-
-    # 3. Generate publication-ready figures
-    print("\nGenerating IEEE publication-quality figures...")
-    plot_baseline_comparison(raw_df, summary_df)
-    plot_weight_sensitivity(weight_df)
-
-    print("\n[SUCCESS] Baseline benchmark and weight sensitivity completed successfully.")
-
+    if not args.weight_only:
+        raw_df, summary_df = run_all_baselines_benchmark(num_seeds=args.baseline_seeds)
+        plot_baseline_comparison(raw_df, summary_df)
+    if not args.baseline_only:
+        weight_df = run_weight_sensitivity_benchmark(num_seeds=args.weight_seeds)
+        plot_weight_sensitivity(weight_df)
+    print("\n[SUCCESS] Requested benchmark(s) completed.")
 
 if __name__ == "__main__":
     main()

@@ -1,13 +1,3 @@
-"""
-Ablation Study and Statistical Significance Benchmark for Step 6.
-Target Venue: IEEE PerCom 2027 (A4E Workshop)
-
-Generates:
-1. data_ablation_study.csv: Performance breakdown across 5 architectural ablations over 30 seeds.
-2. data_statistical_tests.csv: Paired Wilcoxon signed-rank tests, t-tests, Cohen's d effect sizes,
-   and 95% confidence intervals comparing Full-Proposed against ablations and baselines.
-"""
-
 import sys
 from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -39,19 +29,16 @@ from edge_switching.policies import (
     ProposedMarginPolicy,
 )
 from edge_switching.weighting import get_literature_ahp_profile
+from edge_switching.metrics import compute_scenario_metrics
 
 LOGS_DIR = ROOT_DIR / "logs" / "ablations"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-
 class AblationNoNoiseHurdlePolicy(ProposedMarginPolicy):
-    """Ablation 1: Uses fixed static hurdle lambda without noise adaptation (k_noise = 0)."""
     def __init__(self, base_hurdle: float = 0.05):
         super().__init__(base_hurdle=base_hurdle, k_noise=0.0, min_dwell_steps=4)
 
-
 class AblationNoBufferMultiplierPolicy(ProposedMarginPolicy):
-    """Ablation 2: Does not scale switching hurdle when buffer is critically depleted."""
     def decide(self, client, matrix, engine, telemetry_history=None):
         # Override to keep hurdle fixed regardless of buffer
         saved_buf = client.buffer_occupancy_s
@@ -60,9 +47,7 @@ class AblationNoBufferMultiplierPolicy(ProposedMarginPolicy):
         client.buffer_occupancy_s = saved_buf
         return dec
 
-
 class AblationNoPlusOnePolicy(BaseSelectionPolicy):
-    """Ablation 3: Uses raw advertised server capacity instead of (+1)-user effective bandwidth."""
     def __init__(self, base_hurdle: float = 0.05, k_noise: float = 1.65):
         super().__init__("Ablation-NoPlusOneBandwidth")
         self.base_hurdle = base_hurdle
@@ -92,13 +77,29 @@ class AblationNoPlusOnePolicy(BaseSelectionPolicy):
             return {"action": "SWITCH", "target_server": best_id, "decision_margin": gain, "switching_hurdle": self.base_hurdle}
         return {"action": "RETAIN", "target_server": curr_id, "decision_margin": gain, "switching_hurdle": self.base_hurdle}
 
+def _mean_ci(values):
+    values = np.asarray(values, dtype=float)
+    n = len(values)
+    mean = float(np.mean(values))
+    sd = float(np.std(values, ddof=1)) if n > 1 else 0.0
+    half = float(stats.t.ppf(0.975, n - 1) * sd / np.sqrt(n)) if n > 1 else 0.0
+    return mean, sd, half
+
+def _holm_adjust(p_values):
+    p = np.asarray(p_values, dtype=float)
+    order = np.argsort(p)
+    adjusted = np.empty_like(p)
+    running = 0.0
+    m = len(p)
+    for rank, idx in enumerate(order):
+        running = max(running, (m - rank) * p[idx])
+        adjusted[idx] = min(1.0, running)
+    return adjusted
 
 def run_ablation_experiments():
-    """Run 30-seed benchmark across all component ablations."""
-    print("1. Running Component Ablation Suite (30 seeds across canonical scenarios)...")
+    print("1. Running component ablations (30 paired seeds)...")
     w_video, _, _ = get_literature_ahp_profile("video_streaming")
     num_seeds = 30
-
     configurations = {
         "Full-Proposed": ProposedMarginPolicy(base_hurdle=0.05, k_noise=1.65, min_dwell_steps=4),
         "Ablation-NoNoiseHurdle": AblationNoNoiseHurdlePolicy(base_hurdle=0.05),
@@ -108,115 +109,108 @@ def run_ablation_experiments():
         "Baseline-MinLatency": MinLatencyPolicy(),
         "Baseline-MaxTotalBW": MaxTotalBandwidthPolicy(),
     }
+    scenarios = ["scenario_a", "scenario_b", "scenario_c", "scenario_d", "scenario_f", "scenario_low_buffer"]
+    seed_rows = []
+    summary_rows = []
+    paired_qoe = {name: [] for name in configurations}
 
-    # Store seed-level QoE vectors for statistical testing
-    seed_qoe_records = {name: [] for name in configurations}
-
-    records = []
-    scenarios_to_eval = ["scenario_a", "scenario_b", "scenario_c", "scenario_d", "scenario_f"]
-
-    for name, policy in configurations.items():
-        print(f"  Evaluating configuration: {name}...")
-        all_qoes = []
-        all_switches = []
-        all_ping_pongs = []
-        all_stalls = []
-        all_viols = []
-
+    for name in configurations:
+        print(f"  Evaluating {name}...")
         for seed in range(num_seeds):
-            seed_qoe_acc = []
-            seed_switches = 0
-            seed_stalls = 0.0
-            total_steps = 0
-            total_viols = 0
+            run_metrics = []
+            for scenario in scenarios:
+                # Fresh policy per run prevents hidden state leaking between scenarios.
+                if name == "Full-Proposed":
+                    policy = ProposedMarginPolicy(base_hurdle=0.05, k_noise=1.65, min_dwell_steps=4)
+                elif name == "Ablation-NoNoiseHurdle":
+                    policy = AblationNoNoiseHurdlePolicy(base_hurdle=0.05)
+                elif name == "Ablation-NoBufferMultiplier":
+                    policy = AblationNoBufferMultiplierPolicy(base_hurdle=0.05, k_noise=1.65)
+                elif name == "Ablation-NoPlusOneBW":
+                    policy = AblationNoPlusOnePolicy(base_hurdle=0.05, k_noise=1.65)
+                elif name == "Baseline-AHP-TOPSIS":
+                    policy = AhpTopsisPolicy()
+                elif name == "Baseline-MinLatency":
+                    policy = MinLatencyPolicy()
+                else:
+                    policy = MaxTotalBandwidthPolicy()
+                frame = run_scenario(scenario, duration_s=25.0, dt_s=0.5,
+                                     num_clients=1, seed=seed, policy=policy, weights=w_video)
+                run_metrics.append(compute_scenario_metrics(frame, dt_s=0.5))
 
-            for sc in scenarios_to_eval:
-                df = run_scenario(sc, duration_s=25.0, dt_s=0.5, num_clients=1, seed=seed, policy=policy, weights=w_video)
-                # Compute QoE
-                for _, row in df.iterrows():
-                    bw = float(row["effective_bw_mbps"])
-                    lat = float(row["client_latency_ms"])
-                    sw = 1.0 if row["action"] == "SWITCH" else 0.0
-                    stall = float(row.get("stall_duration_s", 0.0))
+            total_qoe = float(sum(m["cumulative_qoe_proxy"] for m in run_metrics))
+            duration_total = len(scenarios) * 25.0
+            switches = sum(m["total_switches"] for m in run_metrics)
+            seed_record = {
+                "configuration": name, "seed": seed,
+                "cumulative_qoe_proxy": total_qoe,
+                "switch_rate_per_min": switches / duration_total * 60.0,
+                "qos_violation_rate": float(np.mean([m["qos_violation_rate"] for m in run_metrics])),
+                "availability_violation_rate": float(np.nanmean([m["availability_violation_rate"] for m in run_metrics])),
+                "latency_violation_rate": float(np.mean([m["latency_violation_rate"] for m in run_metrics])),
+                "stall_epoch_rate": float(np.mean([m["stall_epoch_rate"] for m in run_metrics])),
+                "ping_pong_rate": float(np.mean([m["ping_pong_rate"] for m in run_metrics])),
+            }
+            seed_rows.append(seed_record)
+            paired_qoe[name].append(total_qoe)
 
-                    qoe = 0.8 * (bw / 25.0) - (0.005 * lat) - (0.5 * sw) - (4.3 * stall)
-                    seed_qoe_acc.append(qoe)
-                    seed_switches += int(sw)
-                    seed_stalls += stall
-                    if lat > 120.0 or stall > 0.0:
-                        total_viols += 1
-                    total_steps += 1
-
-            mean_seed_qoe = float(np.mean(seed_qoe_acc))
-            all_qoes.append(mean_seed_qoe)
-            seed_qoe_records[name].append(mean_seed_qoe)
-
-            all_switches.append((seed_switches / total_steps) * 120.0) # switches / min
-            all_stalls.append(seed_stalls)
-            all_viols.append((total_viols / total_steps) * 100.0)
-
-        mean_qoe = float(np.mean(all_qoes))
-        std_qoe = float(np.std(all_qoes))
-        ci95 = 1.96 * (std_qoe / np.sqrt(num_seeds))
-
-        records.append({
-            "configuration": name,
-            "mean_qoe": round(mean_qoe, 4),
-            "std_qoe": round(std_qoe, 4),
-            "ci95_qoe": round(ci95, 4),
-            "switch_rate_per_min": round(float(np.mean(all_switches)), 2),
-            "stall_duration_s": round(float(np.mean(all_stalls)), 3),
-            "qos_violation_pct": round(float(np.mean(all_viols)), 2),
+        subset = [r for r in seed_rows if r["configuration"] == name]
+        qmean, qsd, qci = _mean_ci([r["cumulative_qoe_proxy"] for r in subset])
+        summary_rows.append({
+            "configuration": name, "n_seeds": num_seeds,
+            "mean_qoe_proxy": qmean, "std_qoe_proxy": qsd, "ci95_qoe_proxy": qci,
+            "mean_switch_rate_per_min": float(np.mean([r["switch_rate_per_min"] for r in subset])),
+            "mean_qos_violation_rate": float(np.mean([r["qos_violation_rate"] for r in subset])),
+            "mean_availability_violation_rate": float(np.nanmean([r["availability_violation_rate"] for r in subset])),
+            "mean_latency_violation_rate": float(np.mean([r["latency_violation_rate"] for r in subset])),
+            "mean_stall_epoch_rate": float(np.mean([r["stall_epoch_rate"] for r in subset])),
         })
 
-    df_abl = pd.DataFrame(records)
-    out_csv = LOGS_DIR / "data_ablation_study.csv"
-    df_abl.to_csv(out_csv, index=False)
-    print(f"  Saved -> {out_csv.name}")
+    pd.DataFrame(seed_rows).to_csv(LOGS_DIR / "data_ablation_seed_level.csv", index=False)
+    pd.DataFrame(summary_rows).to_csv(LOGS_DIR / "data_ablation_study.csv", index=False)
 
-    # -------------------------------------------------------------
-    # Statistical Significance Testing (Paired vs Full-Proposed)
-    # -------------------------------------------------------------
-    print("2. Performing Statistical Hypothesis Tests & Effect Size Analysis...")
-    stat_records = []
-    base_qoe = np.array(seed_qoe_records["Full-Proposed"])
-
-    for comp_name in configurations:
-        if comp_name == "Full-Proposed":
+    print("2. Paired Wilcoxon tests with Holm correction and paired effect sizes...")
+    base = np.asarray(paired_qoe["Full-Proposed"], dtype=float)
+    tests = []
+    raw_ps = []
+    for name in configurations:
+        if name == "Full-Proposed":
             continue
-
-        comp_qoe = np.array(seed_qoe_records[comp_name])
-        diff = base_qoe - comp_qoe
-
-        # Paired Wilcoxon signed-rank test
-        w_stat, w_pval = stats.wilcoxon(diff, alternative="greater")
-
-        # Welch's two-sample t-test
-        t_stat, t_pval = stats.ttest_rel(base_qoe, comp_qoe)
-
-        # Cohen's d effect size
-        d_val = float(np.mean(diff) / (np.std(diff) + 1e-8))
-
-        stat_records.append({
-            "comparison": f"Full-Proposed vs {comp_name}",
-            "mean_qoe_difference": round(float(np.mean(diff)), 4),
-            "wilcoxon_stat_W": round(float(w_stat), 1),
-            "wilcoxon_p_value": float(f"{w_pval:.2e}"),
-            "t_statistic": round(float(t_stat), 3),
-            "t_p_value": float(f"{t_pval:.2e}"),
-            "cohens_d": round(d_val, 3),
-            "statistically_significant": bool(w_pval < 0.001),
-        })
-
-    df_stats = pd.DataFrame(stat_records)
-    out_stat_csv = LOGS_DIR / "data_statistical_tests.csv"
-    df_stats.to_csv(out_stat_csv, index=False)
-    print(f"  Saved -> {out_stat_csv.name}")
-
+        comp = np.asarray(paired_qoe[name], dtype=float)
+        diff = base - comp
+        if np.allclose(diff, 0):
+            w_stat, p_value = 0.0, 1.0
+        else:
+            result = stats.wilcoxon(base, comp, alternative="two-sided", zero_method="wilcox")
+            w_stat, p_value = float(result.statistic), float(result.pvalue)
+        sd_diff = float(np.std(diff, ddof=1)) if len(diff) > 1 else 0.0
+        dz = float(np.mean(diff) / sd_diff) if sd_diff > 0 else float("nan")
+        diff_ci = (float(stats.t.ppf(0.975, len(diff)-1) * sd_diff / np.sqrt(len(diff)))
+                   if len(diff) > 1 else 0.0)
+        # Matched-pairs rank-biserial correlation from positive/negative ranks.
+        nz = diff[~np.isclose(diff, 0.0)]
+        if len(nz):
+            ranks = stats.rankdata(np.abs(nz))
+            rbc = float((np.sum(ranks[nz > 0]) - np.sum(ranks[nz < 0])) / np.sum(ranks))
+        else:
+            rbc = 0.0
+        tests.append({"comparison": f"Full-Proposed vs {name}",
+                      "mean_paired_difference_qoe_proxy": float(np.mean(diff)),
+                      "ci95_paired_difference_qoe_proxy": diff_ci,
+                      "wilcoxon_statistic": w_stat, "p_value": p_value,
+                      "paired_cohens_dz": dz, "rank_biserial_correlation": rbc,
+                      "n_pairs": len(diff)})
+        raw_ps.append(p_value)
+    adjusted = _holm_adjust(raw_ps)
+    for row, p_adj in zip(tests, adjusted):
+        row["holm_adjusted_p_value"] = float(p_adj)
+        row["significant_holm_0_05"] = bool(p_adj < 0.05)
+    pd.DataFrame(tests).to_csv(LOGS_DIR / "data_statistical_tests.csv", index=False)
+    print("Saved seed-level, summary, and corrected statistical outputs.")
 
 def main():
     print("=" * 70)
-    print("STEP 6: RUNNING ABLATION & STATISTICAL SIGNIFICANCE BENCHMARK")
+    print("HEX-SWITCH: COMPONENT ABLATION & STATISTICAL SIGNIFICANCE")
     print("=" * 70)
 
     run_ablation_experiments()

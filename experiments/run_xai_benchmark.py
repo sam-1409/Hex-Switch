@@ -1,14 +1,3 @@
-"""
-Benchmark and Data Generator for Step 4: HCI-Guided Criteria Weighting & XAI Explanation Pipeline.
-Target Venue: IEEE PerCom 2027 (A4E Workshop)
-
-Generates:
-1. data_weights_comparison.csv: AHP literature profiles vs Entropy, CRITIC, Equal weights.
-2. data_feature_attributions.csv: Exact additive Shapley attributions across canonical scenarios.
-3. data_counterfactual_margins.csv: Decision margin and noise boundary trajectory over time.
-4. data_explanation_stability.csv: Explanation churn/entropy under noise (uncalibrated vs noise-calibrated).
-"""
-
 import sys
 from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -43,7 +32,6 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def run_weights_benchmark():
-    """Evaluate and compare AHP literature profiles against objective weighting methods."""
     print("1. Computing Criteria Weights (AHP vs Objective)...")
     records = []
 
@@ -55,14 +43,11 @@ def run_weights_benchmark():
             rec[c.value] = round(w_dict[c], 4)
         records.append(rec)
 
-    # Equal Weights
     rec_eq = {"method": "Equal", "CI": 0.0, "CR": 0.0}
     for c in STANDARD_CRITERIA:
         rec_eq[c.value] = 0.20
     records.append(rec_eq)
 
-    # Objective weights from empirical multi-server candidate matrix
-    # [s1, s2, s3] candidate profiles
     engine = QoSFormalizationEngine()
     now = 10.0
     telemetries = [
@@ -192,58 +177,84 @@ def run_counterfactual_trajectory_benchmark():
     print(f"  Saved -> {out_csv.name}")
 
 
-def run_explanation_stability_benchmark():
-    """Compare explanation churn under noise: uncalibrated greedy vs noise-normalized."""
-    print("4. Measuring Explanation Stability under Stationary Jitter (Scenario A)...")
+def run_explanation_stability_benchmark(num_seeds: int = 30, epochs: int = 60):
+    """Measure actual explainer dominant-criterion churn under controlled jitter.
+
+    This is a synthetic, controlled telemetry experiment, not a real-trace result.
+    Each seed creates an independent noise sequence. Explanations are generated
+    by EdgeSwitchingExplainer from the actual DecisionMatrix at every epoch.
+    """
+    print(f"4. Measuring explanation stability ({num_seeds} seeds x {epochs} epochs)...")
     w_video, _, _ = get_literature_ahp_profile("video_streaming")
-
-    # Run Scenario A with uncalibrated TOPSIS vs Proposed Margin Policy
-    pol_topsis = AhpTopsisPolicy()
-    pol_margin = ProposedMarginPolicy(base_hurdle=0.05, k_noise=1.65)
-
-    df_topsis = run_scenario("scenario_a", duration_s=30.0, dt_s=0.5, num_clients=1, seed=42, policy=pol_topsis, weights=w_video)
-    df_margin = run_scenario("scenario_a", duration_s=30.0, dt_s=0.5, num_clients=1, seed=42, policy=pol_margin, weights=w_video)
-
+    methods = {
+        "AHP-TOPSIS": lambda: AhpTopsisPolicy(),
+        "Proposed-Margin": lambda: ProposedMarginPolicy(base_hurdle=0.05, k_noise=1.65),
+    }
+    seed_records = []
     engine = QoSFormalizationEngine()
-    explainer = EdgeSwitchingExplainer(engine)
 
-    # Track dominant feature switches over time under noise
-    def count_explanation_flips(df_run):
-        dominant_features = []
-        for i in range(len(df_run)):
-            # Simulated feature delta
-            row = df_run.iloc[i]
-            lat = row["client_latency_ms"]
-            bw = row["effective_bw_mbps"]
-            # Check which criterion fluctuated more
-            dom = "latency" if (lat % 2.0 > 1.0) else "effective_bw"
-            if row["action"] == "SWITCH":
-                dom = "handover_driver"
-            dominant_features.append(dom)
+    for method, factory in methods.items():
+        for seed in range(num_seeds):
+            rng = np.random.default_rng(seed)
+            policy = factory()
+            explainer = EdgeSwitchingExplainer(engine)
+            client = VideoClientState("c0", "s1", buffer_occupancy_s=4.0)
+            dominant = []
+            action_sequence = []
+            attribution_vectors = []
 
-        flips = sum(1 for j in range(1, len(dominant_features)) if dominant_features[j] != dominant_features[j-1])
-        return dominant_features, flips
+            for epoch in range(epochs):
+                now = (epoch + 1) * 0.5
+                # Stationary underlying state; only measurement noise changes.
+                s1 = ServerTelemetry(
+                    "s1", max(5.0, 35.0 + rng.normal(0.0, 3.0)), 300.0,
+                    10, max(0.5, 30.0 + rng.normal(0.0, 1.5)), 0.20,
+                    0.005, True, now)
+                s2 = ServerTelemetry(
+                    "s2", max(5.0, 42.0 + rng.normal(0.0, 3.0)), 800.0,
+                    25, max(0.5, 42.0 + rng.normal(0.0, 1.5)), 0.35,
+                    0.005, True, now)
+                matrix = engine.build_matrices([s1, s2], w_video, now)
+                decision = policy.decide(client, matrix, engine, telemetry_history=None)
+                explanation = explainer.explain_decision(client, matrix, decision)
+                dominant.append(explanation.dominant_criterion)
+                action_sequence.append(str(decision.get("action", "RETAIN")))
+                attribution_vectors.append(explanation.feature_attributions)
+                if decision.get("action") == "SWITCH":
+                    client.current_server_id = str(decision.get("target_server", client.current_server_id))
 
-    _, flips_topsis = count_explanation_flips(df_topsis)
-    _, flips_margin = count_explanation_flips(df_margin)
+            flips = sum(dominant[i] != dominant[i - 1] for i in range(1, len(dominant)))
+            churn_rate = flips / max(1, epochs - 1)
+            seed_records.append({
+                "method": method, "seed": seed, "epochs": epochs,
+                "dominant_criterion_flips": flips,
+                "dominant_criterion_churn_rate": churn_rate,
+                "explanation_stability_pct": 100.0 * (1.0 - churn_rate),
+                "action_switches": sum(a == "SWITCH" for a in action_sequence),
+                "event_regime": "stationary_gaussian_jitter",
+            })
 
-    # Proposed margin maintains 100% stable explanation (0 action flips under noise)
-    switches_topsis = int((df_topsis["action"] == "SWITCH").sum())
-    switches_margin = int((df_margin["action"] == "SWITCH").sum())
-
-    rec = [
-        {"method": "Uncalibrated-Greedy (AHP-TOPSIS)", "total_switches_under_noise": switches_topsis, "explanation_churn_count": 18, "explanation_stability_pct": 70.0},
-        {"method": "Noise-Normalized (Proposed)", "total_switches_under_noise": switches_margin, "explanation_churn_count": 0, "explanation_stability_pct": 100.0},
-    ]
-    df_stab = pd.DataFrame(rec)
-    out_csv = LOGS_DIR / "data_explanation_stability.csv"
-    df_stab.to_csv(out_csv, index=False)
-    print(f"  Saved -> {out_csv.name}")
+    seed_df = pd.DataFrame(seed_records)
+    seed_df.to_csv(LOGS_DIR / "data_explanation_stability_seed_level.csv", index=False)
+    summary = (seed_df.groupby("method").agg(
+        n_seeds=("seed", "nunique"),
+        mean_explanation_stability_pct=("explanation_stability_pct", "mean"),
+        std_explanation_stability_pct=("explanation_stability_pct", "std"),
+        mean_dominant_criterion_flips=("dominant_criterion_flips", "mean"),
+        mean_action_switches=("action_switches", "mean"),
+    ).reset_index())
+    from scipy import stats as scipy_stats
+    summary["ci95_stability_pct"] = summary.apply(
+        lambda r: scipy_stats.t.ppf(0.975, int(r.n_seeds)-1) * r.std_explanation_stability_pct / np.sqrt(r.n_seeds)
+        if r.n_seeds > 1 else 0.0, axis=1)
+    summary["measurement"] = "actual dominant criterion from explainer; synthetic stationary telemetry"
+    summary.to_csv(LOGS_DIR / "data_explanation_stability.csv", index=False)
+    print("  Saved seed-level and summary explanation-stability results.")
 
 
 def main():
     print("=" * 70)
-    print("STEP 4: RUNNING XAI BENCHMARK & EXPORTING CLEAN CSV DATA")
+    print("HEX-SWITCH: XAI BENCHMARKS & EXPLANATION PIPELINE")
     print("=" * 70)
 
     run_weights_benchmark()
@@ -251,8 +262,7 @@ def main():
     run_counterfactual_trajectory_benchmark()
     run_explanation_stability_benchmark()
 
-    print("\n[SUCCESS] All Step 4 data files exported successfully.")
-
+    print("\n[SUCCESS] XAI benchmark datasets exported successfully.")
 
 if __name__ == "__main__":
     main()

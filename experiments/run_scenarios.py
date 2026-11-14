@@ -10,15 +10,16 @@ from edge_switching.scenarios import run_scenario
 
 CONFIG_STYLE = ROOT_DIR / "configs" / "plot_style.mplstyle"
 LOGS_DIR = ROOT_DIR / "logs"
-PLOTS_DIR = ROOT_DIR / "plots" / "generated"
-
+PLOTS_DIR = ROOT_DIR / "plots"
 
 def main():
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
-
     plt.style.use(CONFIG_STYLE)
 
+    print("=" * 70)
+    print("HEX-SWITCH: CANONICAL SCENARIO EXECUTION")
+    print("=" * 70)
     scenarios = [
         "scenario_a",
         "scenario_b",
@@ -79,10 +80,10 @@ def main():
             ax.legend(loc="upper right", fontsize=5, ncol=3)
 
     plt.tight_layout()
-    plot_pdf = PLOTS_DIR / "scenarios_overview.pdf"
-    plt.savefig(plot_pdf)
-    print(f"Overview plot generated: {plot_pdf}")
-
+    plot_png = PLOTS_DIR / "scenarios_overview.png"
+    plt.savefig(plot_png, dpi=800)
+    plt.close()
+    print(f"Overview plot generated: {plot_png}")
 
 if __name__ == "__main__":
     main()

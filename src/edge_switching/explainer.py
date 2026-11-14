@@ -1,17 +1,3 @@
-"""
-XAI Explanation Pipeline for QoS-Aware Edge Server Switching.
-Target Venue: IEEE PerCom 2027 (A4E Workshop)
-
-Implements:
-1. Exact Additive Feature Attribution (satisfying the Shapley efficiency axiom: sum phi_k = Delta U).
-2. Counterfactual Explanations:
-   - Noise-normalized decision margin M = Delta U - (lambda_switch + k * sigma).
-   - Minimal physical perturbation delta_k required on current or target server to invert the decision.
-3. Contrastive & Natural Language Synthesis:
-   - Human-readable narrative detailing trade-offs (e.g. throughput gain vs latency penalty).
-   - Emergency failure explanations and noise-suppression notifications.
-"""
-
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
@@ -25,10 +11,8 @@ from edge_switching.qos_model import (
 )
 from edge_switching.simulator import VideoClientState
 
-
 @dataclass
 class ExplanationResult:
-    """Structured container holding all explainability artifacts for a switching decision."""
     action: str                                     # "SWITCH", "RETAIN", "EMERGENCY_SWITCH"
     current_server_id: str
     target_server_id: str
@@ -43,11 +27,28 @@ class ExplanationResult:
     is_emergency: bool
 
 
-class EdgeSwitchingExplainer:
-    """
-    Computes exact, closed-form explanations for edge server switching decisions.
-    """
+@dataclass
+class PreDecisionExplanation:
+    server_rankings: List[str]                             # Ranked candidate server IDs
+    composite_scores: Dict[str, float]                     # Server ID -> overall utility U(s)
+    criterion_contributions: Dict[str, Dict[str, float]]   # Server ID -> {Criterion -> w_k * u_k(s)}
+    feasible_candidates: List[str]                         # Viable candidates passing hard SLO constraints
+    infeasible_candidates: List[str]                       # Candidates rejected by feasibility filter
 
+
+@dataclass
+class PostDecisionComparison:
+    selected_server_id: str
+    alternative_server_ids: List[str]
+    action: str
+    qos_parameter_values: Dict[str, Dict[str, float]]      # Server ID -> {latency, bandwidth, load, loss, availability}
+    qos_utility_values: Dict[str, Dict[str, float]]        # Server ID -> {criterion -> normalized utility}
+    counterfactual_distances: Dict[str, float]             # Minimal parameter delta to flip decision
+    is_auditor_verified: bool
+    audit_diagnosis: str
+    recommended_feedback: Optional[str] = None
+
+class EdgeSwitchingExplainer:
     def __init__(
         self,
         engine: Optional[QoSFormalizationEngine] = None,
@@ -65,10 +66,6 @@ class EdgeSwitchingExplainer:
         decision: Dict[str, Any],
         telemetry_history: Optional[List[Dict[str, ServerTelemetry]]] = None,
     ) -> ExplanationResult:
-        """
-        Generate complete feature attribution, counterfactual margin,
-        and natural language narrative for the given switching decision.
-        """
         curr_id = client.current_server_id
         target_id = str(decision.get("target_server", curr_id))
         action = str(decision.get("action", "RETAIN"))
@@ -95,9 +92,7 @@ class EdgeSwitchingExplainer:
         is_emergency = (action == "SWITCH" and not curr_feas)
         is_noise_suppressed = ("within telemetry noise margin" in decision.get("reason", "").lower())
 
-        # -------------------------------------------------------------
-        # 1. Exact Additive Feature Attribution (Efficiency Axiom)
-        # -------------------------------------------------------------
+        # 1. Exact Additive Feature Attribution
         attributions: Dict[str, float] = {}
         if curr_idx >= 0 and target_idx >= 0:
             u_curr = matrix.utility_matrix_U[curr_idx, :]
@@ -120,16 +115,11 @@ class EdgeSwitchingExplainer:
         else:
             dominant_crit = max(attributions.keys(), key=lambda k: abs(attributions[k])) if attributions else "none"
 
-        # -------------------------------------------------------------
         # 2. Counterfactual Explanations
-        # -------------------------------------------------------------
-        # Decision Margin M = Delta U - total_hurdle
         static_gain = sum(attributions.values())
         net_margin = float(static_gain - total_hurdle)
 
         cf_distances: Dict[str, float] = {}
-        # What physical improvement on s_curr would prevent a switch?
-        # Or what improvement on target is needed to trigger a switch?
         for k, crit in enumerate(matrix.criteria_order):
             wk = matrix.weight_vector_w[k]
             if wk <= 1e-6:
@@ -137,10 +127,8 @@ class EdgeSwitchingExplainer:
                 continue
 
             if action == "SWITCH" and not is_emergency:
-                # Required utility increase on current server to erase margin
                 delta_u_needed = max(0.0, net_margin / wk)
                 if crit == Criterion.LATENCY:
-                    # delta_u = -delta_L / (L_max - L_min) => delta_L_ms = -delta_u * range
                     cf_raw = delta_u_needed * (self.engine.config.latency_max_ms - self.engine.config.latency_min_ms)
                     cf_distances[crit.value] = round(float(cf_raw), 1)
                 elif crit == Criterion.EFFECTIVE_BW:
@@ -150,7 +138,6 @@ class EdgeSwitchingExplainer:
                     cf_distances[crit.value] = round(float(delta_u_needed), 3)
 
             elif action == "RETAIN":
-                # Shortfall needed on target server to trigger handover
                 shortfall_u = max(0.0, total_hurdle - static_gain) / wk
                 if crit == Criterion.LATENCY:
                     cf_raw = shortfall_u * (self.engine.config.latency_max_ms - self.engine.config.latency_min_ms)
@@ -163,9 +150,7 @@ class EdgeSwitchingExplainer:
             else:
                 cf_distances[crit.value] = 0.0
 
-        # -------------------------------------------------------------
         # 3. Natural Language Narrative Synthesis
-        # -------------------------------------------------------------
         narrative = self._synthesize_narrative(
             action=action,
             curr_id=curr_id,
@@ -211,7 +196,6 @@ class EdgeSwitchingExplainer:
         is_noise_suppressed: bool,
         cf_distances: Dict[str, float],
     ) -> str:
-        """Construct concise, precise natural language justification."""
         if is_emergency:
             return (
                 f"EMERGENCY SWITCH: Migrated from {curr_id} to {target_id} because "
@@ -220,7 +204,6 @@ class EdgeSwitchingExplainer:
             )
 
         if action == "SWITCH":
-            # Identify top driver and top trade-off
             gains = [f"{k} (+{v:.2f})" for k, v in attributions.items() if v > 0.01]
             sacrifices = [f"{k} ({v:.2f})" for k, v in attributions.items() if v < -0.01]
 
@@ -251,3 +234,141 @@ class EdgeSwitchingExplainer:
                     f"RETAIN: Kept connection on {curr_id}. Migration gain (+{static_gain:.3f}) did not "
                     f"exceed switching cost hurdle ({hurdle:.2f}). Playout continuity preserved."
                 )
+
+    def explain_pre_decision(self, matrix: DecisionMatrix) -> PreDecisionExplanation:
+        composite_scores: Dict[str, float] = {}
+        criterion_contributions: Dict[str, Dict[str, float]] = {}
+        feasible_candidates: List[str] = []
+        infeasible_candidates: List[str] = []
+
+        w = matrix.weight_vector_w
+        for i, s_id in enumerate(matrix.server_ids):
+            is_feas = bool(matrix.feasible_mask[i])
+            if is_feas:
+                feasible_candidates.append(s_id)
+            else:
+                infeasible_candidates.append(s_id)
+
+            u_vec = matrix.utility_matrix_U[i, :]
+            score = float(np.dot(w, u_vec)) if is_feas else -1.0
+            composite_scores[s_id] = round(score, 4)
+
+            contribs = {}
+            for k, crit in enumerate(matrix.criteria_order):
+                contribs[crit.value] = round(float(w[k] * u_vec[k]), 4)
+            criterion_contributions[s_id] = contribs
+
+        ranked_feasible = sorted(feasible_candidates, key=lambda s: composite_scores[s], reverse=True)
+        server_rankings = ranked_feasible + infeasible_candidates
+
+        return PreDecisionExplanation(
+            server_rankings=server_rankings,
+            composite_scores=composite_scores,
+            criterion_contributions=criterion_contributions,
+            feasible_candidates=feasible_candidates,
+            infeasible_candidates=infeasible_candidates,
+        )
+
+    def explain_post_decision(
+        self,
+        client: VideoClientState,
+        matrix: DecisionMatrix,
+        decision: Dict[str, Any],
+        telemetry_dict: Dict[str, ServerTelemetry],
+        audit_report: Optional[Any] = None,
+    ) -> PostDecisionComparison:
+        selected_id = str(decision.get("target_server", client.current_server_id))
+        action = str(decision.get("action", "RETAIN"))
+        alternative_ids = [s for s in matrix.server_ids if s != selected_id]
+
+        qos_params: Dict[str, Dict[str, float]] = {}
+        qos_utilities: Dict[str, Dict[str, float]] = {}
+
+        for i, s_id in enumerate(matrix.server_ids):
+            telem = telemetry_dict.get(s_id)
+            eff_bw = float(matrix.raw_matrix_X[i, 1]) if i < matrix.raw_matrix_X.shape[0] else (
+                self.engine.compute_effective_bandwidth(telem) if telem else 0.0
+            )
+            if telem:
+                qos_params[s_id] = {
+                    "latency_ms": round(float(telem.latency_ms), 2),
+                    "effective_bw_mbps": round(eff_bw, 2),
+                    "active_users_load": int(telem.active_users),
+                    "packet_loss_rate": round(float(telem.packet_loss), 4),
+                    "is_available": 1.0 if telem.is_available else 0.0,
+                }
+            else:
+                qos_params[s_id] = {
+                    "latency_ms": 0.0,
+                    "effective_bw_mbps": 0.0,
+                    "active_users_load": 0,
+                    "packet_loss_rate": 0.0,
+                    "is_available": 0.0,
+                }
+
+            u_vec = matrix.utility_matrix_U[i, :]
+            u_dict = {}
+            for k, crit in enumerate(matrix.criteria_order):
+                u_dict[crit.value] = round(float(u_vec[k]), 4)
+            qos_utilities[s_id] = u_dict
+
+        exp = self.explain_decision(client, matrix, decision)
+
+        auditor_verified = bool(audit_report.is_valid) if audit_report else True
+        diagnosis = str(audit_report.root_cause_diagnosis) if audit_report else "Audited: Compliant with all invariants."
+        recommendation = str(audit_report.remedial_recommendation) if audit_report else None
+
+        return PostDecisionComparison(
+            selected_server_id=selected_id,
+            alternative_server_ids=alternative_ids,
+            action=action,
+            qos_parameter_values=qos_params,
+            qos_utility_values=qos_utilities,
+            counterfactual_distances=exp.counterfactual_distances,
+            is_auditor_verified=auditor_verified,
+            audit_diagnosis=diagnosis,
+            recommended_feedback=recommendation,
+        )
+
+    def generate_weight_feedback(
+        self,
+        current_weights: Dict[Criterion, float],
+        audit_report: Optional[Any] = None,
+        user_feedback_action: Optional[str] = None,
+        learning_rate: float = 0.10,
+    ) -> Dict[Criterion, float]:
+        updated = dict(current_weights)
+
+        # 1. Closed-loop adaptation based on Auditor warnings
+        if audit_report and not audit_report.is_valid:
+            fault_names = [getattr(f, "value", str(f)) for f in audit_report.detected_faults]
+            if "buffer_starvation_hazard" in fault_names:
+                # Playout stall risk: Increase latency and availability priority, reduce aggressive bandwidth pursuit
+                updated[Criterion.LATENCY] = updated.get(Criterion.LATENCY, 0.2) + learning_rate
+                updated[Criterion.AVAILABILITY] = updated.get(Criterion.AVAILABILITY, 0.2) + learning_rate
+                updated[Criterion.EFFECTIVE_BW] = max(0.05, updated.get(Criterion.EFFECTIVE_BW, 0.3) - learning_rate)
+            elif "spurious_handover" in fault_names:
+                # Sensitive to noise: Moderately boost availability and stability
+                updated[Criterion.AVAILABILITY] = updated.get(Criterion.AVAILABILITY, 0.2) + (0.5 * learning_rate)
+
+        # 2. Closed-loop adaptation based on user preference steering
+        if user_feedback_action:
+            action_lower = user_feedback_action.lower()
+            if "quality" in action_lower or "bandwidth" in action_lower:
+                updated[Criterion.EFFECTIVE_BW] = updated.get(Criterion.EFFECTIVE_BW, 0.3) + learning_rate
+            elif "latency" in action_lower or "interactive" in action_lower:
+                updated[Criterion.LATENCY] = updated.get(Criterion.LATENCY, 0.2) + learning_rate
+            elif "reliability" in action_lower or "loss" in action_lower:
+                updated[Criterion.PACKET_LOSS] = updated.get(Criterion.PACKET_LOSS, 0.15) + learning_rate
+                updated[Criterion.AVAILABILITY] = updated.get(Criterion.AVAILABILITY, 0.15) + learning_rate
+
+        # Re-normalize weights strictly to sum to 1.0
+        total_w = sum(updated.values())
+        if total_w > 0:
+            for k in updated:
+                updated[k] = float(np.round(updated[k] / total_w, 4))
+            # Handle rounding residual on dominant criterion
+            diff = 1.0 - sum(updated.values())
+            updated[Criterion.EFFECTIVE_BW] = round(updated[Criterion.EFFECTIVE_BW] + diff, 4)
+
+        return updated

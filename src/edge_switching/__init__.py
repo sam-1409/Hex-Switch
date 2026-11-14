@@ -1,10 +1,3 @@
-"""
-edge_switching: Research codebase for HCI-Guided, XAI-Enabled Server Switching
-for QoS-Aware Edge Computing Under Dynamic Network Conditions.
-
-Target: IEEE PerCom 2027 A4E Workshop.
-"""
-
 from edge_switching.qos_model import (
     Criterion,
     DecisionMatrix,
@@ -54,6 +47,8 @@ from edge_switching.weighting import (
 from edge_switching.explainer import (
     EdgeSwitchingExplainer,
     ExplanationResult,
+    PreDecisionExplanation,
+    PostDecisionComparison,
 )
 from edge_switching.auditor import (
     FaultType,
@@ -63,49 +58,18 @@ from edge_switching.auditor import (
     PostDecisionAuditor,
     CounterfactualFaithfulnessVerifier,
 )
-
 __version__ = "0.1.0"
 
 __all__ = [
-    "Criterion",
-    "DecisionMatrix",
-    "QoSFormalizationEngine",
-    "ServerTelemetry",
-    "SystemConfig",
-    "ClosedLoopSimulator",
-    "EdgeServerNode",
-    "EventLabel",
-    "NoiseDistribution",
-    "VideoClientState",
-    "create_standard_servers",
-    "run_scenario",
-    "BaseSelectionPolicy",
-    "NearestServerPolicy",
-    "MinLatencyPolicy",
-    "MaxTotalBandwidthPolicy",
-    "MaxEffectiveBandwidthPolicy",
-    "AhpTopsisPolicy",
-    "HysteresisOnlyPolicy",
-    "QoEGreedyPolicy",
-    "ProposedMarginPolicy",
-    "compute_linear_qoe",
-    "compute_qos_violation_rate",
-    "compute_switch_rate_per_minute",
-    "compute_ping_pong_rate",
-    "compute_mean_dwell_time",
-    "compute_scenario_metrics",
-    "compute_ahp_weights",
-    "get_literature_ahp_profile",
-    "compute_entropy_weights",
-    "compute_critic_weights",
-    "compute_equal_weights",
-    "get_all_weight_methods",
-    "EdgeSwitchingExplainer",
-    "ExplanationResult",
-    "FaultType",
-    "AuditSeverity",
-    "AuditReport",
-    "FaithfulnessReport",
-    "PostDecisionAuditor",
-    "CounterfactualFaithfulnessVerifier",
+    "Criterion", "DecisionMatrix", "QoSFormalizationEngine", "ServerTelemetry", "SystemConfig", 
+    "ClosedLoopSimulator", "EdgeServerNode", "EventLabel", "NoiseDistribution", "VideoClientState",
+    "create_standard_servers", "run_scenario", "BaseSelectionPolicy", "NearestServerPolicy", 
+    "MinLatencyPolicy", "MaxTotalBandwidthPolicy", "MaxEffectiveBandwidthPolicy", "AhpTopsisPolicy",
+    "HysteresisOnlyPolicy", "QoEGreedyPolicy", "ProposedMarginPolicy", "compute_linear_qoe", 
+    "compute_qos_violation_rate", "compute_switch_rate_per_minute", "compute_ping_pong_rate",
+    "compute_mean_dwell_time", "compute_scenario_metrics", "compute_ahp_weights", 
+    "get_literature_ahp_profile", "compute_entropy_weights", "compute_critic_weights", 
+    "compute_equal_weights", "get_all_weight_methods", "EdgeSwitchingExplainer", "ExplanationResult",
+    "PreDecisionExplanation", "PostDecisionComparison", "FaultType", "AuditSeverity", "AuditReport",
+    "FaithfulnessReport", "PostDecisionAuditor", "CounterfactualFaithfulnessVerifier",
 ]
