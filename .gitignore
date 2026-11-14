@@ -21,18 +21,12 @@ paper/
 references/
 
 # Large datasets and traces (tracked via scripts or external links)
-data/raw/*
-data/processed/*
-!data/raw/.gitkeep
-!data/processed/.gitkeep
+data/
 
 # Generated experiment outputs (track schemas/scripts, not bulky outputs)
-logs/*
-experiments/runs/*
-plots/*
-!logs/.gitkeep
-!experiments/runs/.gitkeep
-!plots/.gitkeep
+logs/
+experiments/runs/
+plots/.gitkeep
 
 # IDE / OS
 .idea/
