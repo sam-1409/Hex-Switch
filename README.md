@@ -22,7 +22,7 @@ HEX-Switch addresses the multi-criteria edge switching challenge through five ma
 
 Below is the high-level architecture of the proposed framework:
 
-![HEX-Switch Architecture](architecture.jpg)
+![HEX-Switch Architecture](architecture.png)
 
 ---
 
