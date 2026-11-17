@@ -1,4 +1,4 @@
-# HEX-Switch: HCI-Guided, Explainable Edge Server Switching for QoS-Aware Video Streaming
+# HEX-Switch: Explainable and Safety-Audited Edge Server Switching for QoE-Aware Video Streaming
 
 **HEX-Switch** is an autonomous, explainable client-side framework for Quality of Service (QoS)-aware edge server handover under dynamic network perturbations (wireless channel fading, telemetry measurement noise, local edge server processor congestion, and unannounced node outages).
 
@@ -13,6 +13,16 @@ HEX-Switch addresses the multi-criteria edge switching challenge through five ma
 3. **Playout Buffer-Aware Dynamic Switching Hurdle & Noise Normalization**: Couples switching decisions to an online telemetry noise variance estimator $\hat{\sigma}$ and the client playout buffer state $\Lambda_{\mathrm{switch}}(B) = \lambda_0 [1.0 + \mu \cdot \max(0, \frac{\delta_{\mathrm{switch}} - B(t)}{\delta_{\mathrm{switch}}})]$, eliminating ping-pong handover churn while preserving emergency overrides.
 4. **Exact Closed-Form Additive Shapley XAI & Counterfactual Inversion**: Provides feature attributions $\phi_k = w_k [u_k(s^*) - u_k(s_{\mathrm{curr}})]$ satisfying Shapley additive efficiency ($\sum \phi_k \equiv \Delta U$) and computes minimal physical counterfactual distance perturbations $\Delta x_k^{\mathrm{cf}}$ required to invert decisions.
 5. **Sub-Millisecond In-Line Safety Auditor**: Deploys an edge-viable runtime supervisor ($< 45\,\mu\text{s}$ execution) enforcing five deterministic safety invariants: staleness detection, SLA feasibility verification, spurious handover prevention, playout buffer starvation protection, and weight normalization integrity.
+
+---
+
+---
+
+## 🧠 System Overview
+
+Below is the high-level architecture of the proposed framework:
+
+![HEX-Switch Architecture](architecture.jpg)
 
 ---
 
